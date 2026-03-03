@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+logs/audit/*
+!logs/audit/.gitkeep
+data/vector_db/
+.DS_Store

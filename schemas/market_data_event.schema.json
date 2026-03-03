@@ -1,0 +1,424 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oceantrust.ai/schemas/v1/market_data_event.schema.json",
+  "title": "Oslo Fish Market Data Event",
+  "description": "Canonical schema for fish market price ticks from Fish Pool Oslo, NASDAQ Commodities, and affiliated data providers. Published to Kafka topic: market.oslo.fish.prices",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_type",
+    "timestamp",
+    "source",
+    "instrument",
+    "pricing",
+    "futures",
+    "market_sentiment",
+    "regulatory"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Semantic version of this schema definition.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "examples": [
+        "1.0.0"
+      ]
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Globally unique UUIDv4 identifier. Consumer MUST deduplicate on this field."
+    },
+    "event_type": {
+      "type": "string",
+      "const": "MARKET_PRICE_TICK",
+      "description": "Type discriminator for Kafka consumer routing."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when the price tick was captured from the market feed."
+    },
+    "source": {
+      "type": "object",
+      "description": "Identifies the origin data provider and market context.",
+      "required": [
+        "provider",
+        "feed_type",
+        "market_session",
+        "session_date"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "FISH_POOL_OSLO",
+            "NASDAQ_COMMODITIES",
+            "SINTEF_FEED",
+            "EURONEXT_FISH",
+            "INTERNAL_SIMULATION"
+          ],
+          "description": "The market data provider. INTERNAL_SIMULATION is used for development and testing."
+        },
+        "feed_type": {
+          "type": "string",
+          "enum": [
+            "SPOT",
+            "FUTURES",
+            "AUCTION",
+            "INDEX"
+          ],
+          "description": "The pricing mechanism this tick represents."
+        },
+        "market_session": {
+          "type": "string",
+          "enum": [
+            "PRE_MARKET",
+            "CONTINUOUS",
+            "CLOSING",
+            "POST_MARKET",
+            "CLOSED"
+          ],
+          "description": "The current trading phase of the market."
+        },
+        "session_date": {
+          "type": "string",
+          "format": "date",
+          "description": "ISO 8601 date (YYYY-MM-DD) of the trading session this tick belongs to."
+        }
+      }
+    },
+    "instrument": {
+      "type": "object",
+      "description": "Defines the specific aquaculture commodity being priced.",
+      "required": [
+        "species",
+        "scientific_name",
+        "product_form",
+        "weight_class_kg",
+        "origin_country",
+        "certification"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "species": {
+          "type": "string",
+          "enum": [
+            "ATLANTIC_SALMON",
+            "BLUEFIN_TUNA",
+            "PACIFIC_SALMON",
+            "RAINBOW_TROUT",
+            "ARCTIC_CHAR",
+            "SEABREAM",
+            "SEABASS",
+            "HALIBUT"
+          ],
+          "description": "Commercial fish species. Used as part of the Kafka composite partition key."
+        },
+        "scientific_name": {
+          "type": "string",
+          "description": "Binomial Latin species name for regulatory compliance.",
+          "examples": [
+            "Salmo salar",
+            "Thunnus thynnus",
+            "Oncorhynchus mykiss"
+          ]
+        },
+        "product_form": {
+          "type": "string",
+          "enum": [
+            "FRESH_HOG",
+            "FRESH_GUTTED",
+            "FROZEN_WHOLE",
+            "SMOKED",
+            "FILLET_FRESH",
+            "FILLET_FROZEN",
+            "LIVE"
+          ],
+          "description": "Processing or preservation state of the fish product. Used as part of the Kafka composite partition key."
+        },
+        "weight_class_kg": {
+          "type": "string",
+          "enum": [
+            "1-2",
+            "2-3",
+            "3-4",
+            "4-5",
+            "5-6",
+            "6+"
+          ],
+          "description": "Standard market weight class range in kilograms per individual fish."
+        },
+        "origin_country": {
+          "type": "string",
+          "pattern": "^[A-Z]{2}$",
+          "description": "ISO 3166-1 alpha-2 country code of farm origin. Common values: NO (Norway), CL (Chile), GB (UK), CA (Canada)."
+        },
+        "certification": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "ASC",
+              "GLOBAL_GAP",
+              "MSC",
+              "ORGANIC_EU",
+              "LABEL_ROUGE",
+              "FRIEND_OF_SEA",
+              "BAP"
+            ]
+          },
+          "description": "List of active quality and sustainability certifications held by the lot. Empty array if none."
+        }
+      }
+    },
+    "pricing": {
+      "type": "object",
+      "description": "Current price data for the instrument. All monetary values carry 4 decimal places of precision.",
+      "required": [
+        "currency",
+        "spot_price_per_kg",
+        "bid_price_per_kg",
+        "ask_price_per_kg",
+        "spread_per_kg",
+        "daily_open_price",
+        "daily_high_price",
+        "daily_low_price",
+        "previous_close_price",
+        "price_change_pct",
+        "volume_traded_kg",
+        "volume_traded_nok"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "type": "string",
+          "enum": [
+            "NOK",
+            "EUR",
+            "USD"
+          ],
+          "description": "ISO 4217 currency code for all price fields in this object."
+        },
+        "spot_price_per_kg": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Current market spot price per kilogram. 4 decimal places."
+        },
+        "bid_price_per_kg": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Best available buy price per kilogram from active order book."
+        },
+        "ask_price_per_kg": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Best available sell price per kilogram from active order book."
+        },
+        "spread_per_kg": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Bid-ask spread per kilogram. Calculated as ask_price_per_kg - bid_price_per_kg."
+        },
+        "daily_open_price": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Price at market open for the current trading session."
+        },
+        "daily_high_price": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Highest price reached in the current trading session."
+        },
+        "daily_low_price": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Lowest price reached in the current trading session."
+        },
+        "previous_close_price": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Closing price from the previous trading session."
+        },
+        "price_change_pct": {
+          "type": "number",
+          "description": "Percentage change from previous_close_price to spot_price_per_kg. Formula: ((spot - prev_close) / prev_close) * 100. Can be negative."
+        },
+        "volume_traded_kg": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total kilograms of this instrument traded in the current session up to the tick timestamp."
+        },
+        "volume_traded_nok": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total monetary value traded (in NOK) in the current session up to the tick timestamp."
+        }
+      }
+    },
+    "futures": {
+      "type": "object",
+      "description": "Forward/futures contract pricing data, if available for this instrument.",
+      "required": [
+        "available",
+        "contracts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "type": "boolean",
+          "description": "Whether futures contracts are actively traded for this instrument."
+        },
+        "contracts": {
+          "type": "array",
+          "description": "List of active futures contract months. Empty array if available is false.",
+          "items": {
+            "type": "object",
+            "required": [
+              "contract_month",
+              "settlement_price_per_kg",
+              "open_interest_kg"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "contract_month": {
+                "type": "string",
+                "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+                "description": "Contract expiry month in YYYY-MM format.",
+                "examples": [
+                  "2026-04",
+                  "2026-06"
+                ]
+              },
+              "settlement_price_per_kg": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Current settlement/last traded price for this futures contract per kilogram."
+              },
+              "open_interest_kg": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Total outstanding open interest for this contract expressed in kilograms."
+              }
+            }
+          }
+        }
+      }
+    },
+    "market_sentiment": {
+      "type": "object",
+      "description": "Derived signals representing market conditions, analyst views, and news-based sentiment.",
+      "required": [
+        "analyst_consensus",
+        "supply_pressure_index",
+        "demand_pressure_index",
+        "volatility_index_30d",
+        "news_sentiment_score"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "analyst_consensus": {
+          "type": "string",
+          "enum": [
+            "STRONG_BUY",
+            "BUY",
+            "NEUTRAL",
+            "SELL",
+            "STRONG_SELL"
+          ],
+          "description": "Aggregated analyst recommendation for this commodity."
+        },
+        "supply_pressure_index": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Normalized index (0–1) representing supply-side pressure. Higher values indicate excess supply and potential downward price pressure."
+        },
+        "demand_pressure_index": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Normalized index (0–1) representing demand-side pressure. Higher values indicate strong buying interest."
+        },
+        "volatility_index_30d": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Normalized 30-day rolling price volatility (0=stable, 1=highly volatile)."
+        },
+        "news_sentiment_score": {
+          "type": "number",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "description": "NLP-derived sentiment score from recent industry news. -1.0 = extremely negative, 0 = neutral, +1.0 = extremely positive."
+        }
+      }
+    },
+    "regulatory": {
+      "type": "object",
+      "description": "Quota and export restriction data relevant to this instrument's origin.",
+      "required": [
+        "weekly_quota_remaining_tons",
+        "quota_utilization_pct",
+        "active_export_restrictions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "weekly_quota_remaining_tons": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Remaining catch or production quota for the current week in metric tons. Null if quota data is unavailable."
+        },
+        "quota_utilization_pct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of the weekly quota that has been consumed. Null if quota data is unavailable."
+        },
+        "active_export_restrictions": {
+          "type": "array",
+          "description": "List of currently active export restriction or sanction codes affecting this instrument. Empty array [] if no restrictions apply.",
+          "items": {
+            "type": "object",
+            "required": [
+              "restriction_code",
+              "target_country",
+              "description"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "restriction_code": {
+                "type": "string",
+                "description": "Official regulation or sanction code reference.",
+                "examples": [
+                  "EU-SANCTION-2024-123",
+                  "NO-EXPORT-BAN-RU"
+                ]
+              },
+              "target_country": {
+                "type": "string",
+                "pattern": "^[A-Z]{2}$",
+                "description": "ISO 3166-1 alpha-2 code of the country affected by the restriction."
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 300,
+                "description": "Human-readable summary of the restriction."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,362 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oceantrust.ai/schemas/v1/iot_sensor_event.schema.json",
+  "title": "IoT Sensor Event — Salmon Farm Telemetry",
+  "description": "Canonical schema for water quality, biological, and environmental readings emitted by physical sensor units deployed in salmon farm cages. Published to Kafka topic: salmon.farm.sensor.telemetry",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_type",
+    "timestamp",
+    "producer",
+    "location",
+    "water_quality",
+    "biological",
+    "environment",
+    "alerts",
+    "data_quality"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Semantic version of this schema definition.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "examples": ["1.0.0"]
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Globally unique UUIDv4 identifier for this event. Used for idempotency and deduplication by consumers."
+    },
+    "event_type": {
+      "type": "string",
+      "const": "SENSOR_TELEMETRY",
+      "description": "Type discriminator. Always SENSOR_TELEMETRY for this schema."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp with UTC offset representing the exact moment the sensor captured the reading."
+    },
+    "producer": {
+      "type": "object",
+      "description": "Identifies the physical hardware device that produced this event.",
+      "required": ["device_id", "device_type", "firmware_version", "manufacturer"],
+      "additionalProperties": false,
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "description": "Unique device identifier. Convention: SENSOR-{COUNTRY_ISO}-{FARM_ID}-{CAGE_ID}-{UNIT_NUMBER}",
+          "pattern": "^SENSOR-[A-Z]{2}-[A-Z0-9-]+-CAGE-[0-9]+-UNIT[0-9]+$",
+          "examples": ["SENSOR-NO-FARM07-CAGE03-UNIT02"]
+        },
+        "device_type": {
+          "type": "string",
+          "enum": [
+            "MULTIPARAMETER_PROBE",
+            "CAMERA_UNIT",
+            "FEEDING_SENSOR",
+            "LICE_DETECTOR",
+            "CURRENT_METER"
+          ],
+          "description": "Category of sensor hardware."
+        },
+        "firmware_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "Semver firmware version running on the device."
+        },
+        "manufacturer": {
+          "type": "string",
+          "description": "Hardware vendor name.",
+          "maxLength": 100
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "description": "Geographic and operational placement of the sensor.",
+      "required": ["farm_id", "farm_name", "cage_id", "coordinates", "region", "water_body"],
+      "additionalProperties": false,
+      "properties": {
+        "farm_id": {
+          "type": "string",
+          "description": "Unique farm identifier. Used as the Kafka partition key. Format: {COUNTRY_ISO}-FARM-{NUMBER}",
+          "pattern": "^[A-Z]{2}-FARM-[0-9]+$",
+          "examples": ["NO-FARM-0047"]
+        },
+        "farm_name": {
+          "type": "string",
+          "description": "Human-readable name of the aquaculture facility.",
+          "maxLength": 200
+        },
+        "cage_id": {
+          "type": "string",
+          "description": "Identifier for the specific pen or cage within the farm.",
+          "pattern": "^CAGE-[0-9]+$"
+        },
+        "coordinates": {
+          "type": "object",
+          "required": ["latitude", "longitude", "depth_meters"],
+          "additionalProperties": false,
+          "properties": {
+            "latitude": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90,
+              "description": "WGS84 decimal degrees latitude."
+            },
+            "longitude": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180,
+              "description": "WGS84 decimal degrees longitude."
+            },
+            "depth_meters": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 200,
+              "description": "Sensor deployment depth below water surface in meters."
+            }
+          }
+        },
+        "region": {
+          "type": "string",
+          "enum": [
+            "NORWAY",
+            "SCOTLAND",
+            "CHILE",
+            "CANADA",
+            "FAROE_ISLANDS",
+            "IRELAND",
+            "ICELAND"
+          ],
+          "description": "High-level geographic region of the farm."
+        },
+        "water_body": {
+          "type": "string",
+          "enum": ["FJORD", "OPEN_SEA", "COASTAL", "INLAND_LAKE"],
+          "description": "Classification of the water environment."
+        }
+      }
+    },
+    "water_quality": {
+      "type": "object",
+      "description": "Real-time physicochemical water measurements. Use explicit null for sensor faults — never omit a field.",
+      "required": [
+        "temperature_celsius",
+        "dissolved_oxygen_mg_l",
+        "oxygen_saturation_percent",
+        "salinity_ppt",
+        "ph",
+        "turbidity_ntu",
+        "chlorophyll_a_ug_l"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "temperature_celsius": {
+          "type": ["number", "null"],
+          "minimum": -5,
+          "maximum": 40,
+          "description": "Water temperature in degrees Celsius. Alert threshold: WARNING > 16.0, CRITICAL > 18.0"
+        },
+        "dissolved_oxygen_mg_l": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 25,
+          "description": "Dissolved oxygen concentration in milligrams per liter. Alert threshold: WARNING < 9.0, CRITICAL < 7.0"
+        },
+        "oxygen_saturation_percent": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 200,
+          "description": "Percent oxygen saturation relative to air at current temperature and salinity."
+        },
+        "salinity_ppt": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 50,
+          "description": "Water salinity in parts per thousand. Acceptable range: 28.0–36.0 ppt."
+        },
+        "ph": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 14,
+          "description": "Water pH level. Acceptable marine range: 7.0–8.5."
+        },
+        "turbidity_ntu": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Water turbidity in Nephelometric Turbidity Units. Alert threshold: WARNING > 10.0 NTU."
+        },
+        "chlorophyll_a_ug_l": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 500,
+          "description": "Chlorophyll-a concentration in micrograms per liter. Proxy for algae bloom risk. Alert: > 10.0 μg/L."
+        }
+      }
+    },
+    "biological": {
+      "type": "object",
+      "description": "Biological production data from pen monitoring systems.",
+      "required": [
+        "fish_count_estimate",
+        "avg_biomass_kg",
+        "feeding_rate_kg_per_hour",
+        "lice_count_per_fish",
+        "mortality_count_24h"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "fish_count_estimate": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Estimated number of fish in the cage, typically derived from sonar or camera AI counting."
+        },
+        "avg_biomass_kg": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 20,
+          "description": "Estimated average individual fish weight in kilograms."
+        },
+        "feeding_rate_kg_per_hour": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Active feed dispensed in kilograms per hour by the automated feeding system."
+        },
+        "lice_count_per_fish": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Estimated average number of sea lice per fish. Regulatory treatment threshold: 0.5 per fish (Norway). CRITICAL alert if exceeded."
+        },
+        "mortality_count_24h": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Number of dead fish removed in the last 24-hour period. CRITICAL alert > 50 fish."
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "description": "Surrounding oceanographic and environmental conditions.",
+      "required": [
+        "current_speed_m_s",
+        "current_direction_degrees",
+        "algae_bloom_detected",
+        "algae_bloom_type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "current_speed_m_s": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Water current speed in meters per second."
+        },
+        "current_direction_degrees": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 360,
+          "description": "Water current direction in degrees (0=North, 90=East, 180=South, 270=West)."
+        },
+        "algae_bloom_detected": {
+          "type": "boolean",
+          "description": "Flag set by the local edge processor if a harmful algae bloom has been classified."
+        },
+        "algae_bloom_type": {
+          "type": ["string", "null"],
+          "enum": [
+            "KARENIA_MIKIMOTOI",
+            "CHRYSOCHROMULINA",
+            "PSEUDO_NITZSCHIA",
+            "ALEXANDRIUM",
+            null
+          ],
+          "description": "Species of harmful algae detected. Must be null if algae_bloom_detected is false."
+        }
+      }
+    },
+    "alerts": {
+      "type": "array",
+      "description": "List of threshold breaches detected at the edge device level. Empty array [] if all readings are nominal.",
+      "items": {
+        "type": "object",
+        "required": ["alert_code", "severity", "threshold_breached", "current_value", "message"],
+        "additionalProperties": false,
+        "properties": {
+          "alert_code": {
+            "type": "string",
+            "enum": [
+              "O2_LOW_WARNING",
+              "O2_CRITICAL",
+              "TEMP_HIGH_WARNING",
+              "TEMP_CRITICAL",
+              "LICE_THRESHOLD_BREACH",
+              "ALGAE_BLOOM_DETECTED",
+              "HIGH_MORTALITY",
+              "SENSOR_FAULT",
+              "HIGH_TURBIDITY",
+              "PH_OUT_OF_RANGE",
+              "LOW_SALINITY",
+              "HIGH_SALINITY"
+            ],
+            "description": "Machine-readable alert code for downstream routing and processing."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["INFO", "WARNING", "CRITICAL"],
+            "description": "Alert severity for triage and routing priority."
+          },
+          "threshold_breached": {
+            "type": "number",
+            "description": "The configured threshold value that was exceeded."
+          },
+          "current_value": {
+            "type": "number",
+            "description": "The actual sensor reading that triggered the alert."
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Human-readable description of the alert condition."
+          }
+        }
+      }
+    },
+    "data_quality": {
+      "type": "object",
+      "description": "Metadata about the health and reliability of the sensor transmission.",
+      "required": ["signal_strength_dbm", "battery_level_percent", "sensor_status", "missing_fields"],
+      "additionalProperties": false,
+      "properties": {
+        "signal_strength_dbm": {
+          "type": ["integer", "null"],
+          "minimum": -120,
+          "maximum": 0,
+          "description": "RSSI signal strength in dBm. Typical acceptable range: > -80 dBm."
+        },
+        "battery_level_percent": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Remaining battery charge percentage. Alert if < 15%."
+        },
+        "sensor_status": {
+          "type": "string",
+          "enum": ["NOMINAL", "DEGRADED", "FAULTY", "CALIBRATING", "OFFLINE"],
+          "description": "Overall operational status of the sensor unit."
+        },
+        "missing_fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of field names within water_quality or biological that returned null due to sensor faults in this reading cycle."
+        }
+      }
+    }
+  }
+}

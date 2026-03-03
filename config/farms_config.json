@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "OceanTrust AI — Simulated salmon farm registry. Each entry defines a physical farm node whose sensor readings will be published to the ocean.telemetry.v1 Redpanda topic. The farm_id field is used as the Kafka partition key to guarantee per-farm message ordering.",
+  "farms": [
+    {
+      "farm_id": "NO-FARM-0001",
+      "farm_name": "Hardangerfjord Alpha Station",
+      "cage_id": "CAGE-01",
+      "country_iso": "NO",
+      "farm_num": "0001",
+      "coordinates": {
+        "latitude": 60.1533,
+        "longitude": 6.0142,
+        "depth_meters": 5.0
+      },
+      "region": "NORWAY",
+      "water_body": "FJORD",
+      "baseline": {
+        "temperature_celsius": 11.5,
+        "dissolved_oxygen_mg_l": 10.8,
+        "salinity_ppt": 33.2,
+        "ph": 7.82,
+        "turbidity_ntu": 1.3,
+        "chlorophyll_a_ug_l": 1.9
+      }
+    },
+    {
+      "farm_id": "NO-FARM-0047",
+      "farm_name": "Sognefjord Beta Station",
+      "cage_id": "CAGE-03",
+      "country_iso": "NO",
+      "farm_num": "0047",
+      "coordinates": {
+        "latitude": 61.2156,
+        "longitude": 5.7823,
+        "depth_meters": 8.0
+      },
+      "region": "NORWAY",
+      "water_body": "FJORD",
+      "baseline": {
+        "temperature_celsius": 12.0,
+        "dissolved_oxygen_mg_l": 10.5,
+        "salinity_ppt": 33.0,
+        "ph": 7.80,
+        "turbidity_ntu": 1.5,
+        "chlorophyll_a_ug_l": 2.1
+      }
+    },
+    {
+      "farm_id": "NO-FARM-0099",
+      "farm_name": "Nordfjord Gamma Station",
+      "cage_id": "CAGE-02",
+      "country_iso": "NO",
+      "farm_num": "0099",
+      "coordinates": {
+        "latitude": 61.8901,
+        "longitude": 5.4120,
+        "depth_meters": 6.5
+      },
+      "region": "NORWAY",
+      "water_body": "FJORD",
+      "baseline": {
+        "temperature_celsius": 11.8,
+        "dissolved_oxygen_mg_l": 11.0,
+        "salinity_ppt": 32.8,
+        "ph": 7.79,
+        "turbidity_ntu": 1.2,
+        "chlorophyll_a_ug_l": 1.7
+      }
+    },
+    {
+      "farm_id": "SC-FARM-0012",
+      "farm_name": "Loch Fyne Alpha",
+      "cage_id": "CAGE-01",
+      "country_iso": "GB",
+      "farm_num": "0012",
+      "coordinates": {
+        "latitude": 56.0145,
+        "longitude": -5.2234,
+        "depth_meters": 4.0
+      },
+      "region": "SCOTLAND",
+      "water_body": "COASTAL",
+      "baseline": {
+        "temperature_celsius": 10.2,
+        "dissolved_oxygen_mg_l": 11.4,
+        "salinity_ppt": 31.5,
+        "ph": 7.75,
+        "turbidity_ntu": 2.1,
+        "chlorophyll_a_ug_l": 2.8
+      }
+    },
+    {
+      "farm_id": "CL-FARM-0023",
+      "farm_name": "Patagonia Sur Omega",
+      "cage_id": "CAGE-04",
+      "country_iso": "CL",
+      "farm_num": "0023",
+      "coordinates": {
+        "latitude": -43.1234,
+        "longitude": -72.8901,
+        "depth_meters": 10.0
+      },
+      "region": "CHILE",
+      "water_body": "OPEN_SEA",
+      "baseline": {
+        "temperature_celsius": 13.8,
+        "dissolved_oxygen_mg_l": 9.9,
+        "salinity_ppt": 34.1,
+        "ph": 7.88,
+        "turbidity_ntu": 0.9,
+        "chlorophyll_a_ug_l": 1.5
+      }
+    }
+  ]
+}

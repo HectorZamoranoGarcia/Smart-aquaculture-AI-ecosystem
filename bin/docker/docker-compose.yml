@@ -1,0 +1,198 @@
+# =============================================================================
+# Local Development Infrastructure — OceanTrust AI Full Stack
+# =============================================================================
+# Services:
+#   - redpanda   : Single-node Redpanda broker (Kafka API, Schema Registry)
+#   - console    : Redpanda Console UI                    → http://localhost:8080
+#   - qdrant     : Vector database for RAG pipeline       → http://localhost:6333
+#   - ollama     : Local LLM & embedding server           → http://localhost:11434
+#
+# Startup order (enforced via healthchecks):
+#   redpanda (healthy) → console
+#   qdrant   (healthy) → [producers and workers]
+#   ollama   (healthy) → [vector worker fallback embedder]
+#
+# Usage:
+#   make up          Start all services in detached mode
+#   make provision   Create Redpanda topics + Qdrant collections
+#   make clean       Stop all services and remove volumes
+#   make logs        Tail all service logs
+# =============================================================================
+
+name: oceantrust-dev
+
+networks:
+  oceantrust-network:
+    driver: bridge
+
+volumes:
+  redpanda-data:
+    driver: local
+  qdrant-data:
+    driver: local
+  ollama-data:
+    driver: local
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Redpanda: Single-node Kafka-compatible broker with Schema Registry built-in.
+  # Partition key strategy:
+  #   ocean.telemetry.v1   → farm_id  (3 partitions, per-farm ordering)
+  #   market.prices.v1     → species:product_form  (8 partitions, compact)
+  # Ref: docs/kafka-topics.md
+  # ---------------------------------------------------------------------------
+  redpanda:
+    image: redpandadata/redpanda:v24.3.1
+    container_name: redpanda
+    hostname: redpanda
+    networks:
+      - oceantrust-network
+    # External port 19092 is used by host-side producers/consumers (Python scripts).
+    # Internal port 9092 is used by other containers (console, vector worker, agents).
+    ports:
+      - "9092:9092" # Kafka API — container-to-container (console, workers)
+      - "19092:19092" # Kafka API — host-to-container (Python producers/consumers)
+      - "9644:9644" # Redpanda Admin API (rpk, health checks)
+      - "8081:8081" # Schema Registry (JSON Schema / Avro / Protobuf)
+      - "8082:8082" # Pandaproxy HTTP REST API
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    command:
+      - redpanda
+      - start
+      # ── Single-node dev flags ──────────────────────────────────────────────
+      # --overprovisioned: disables CPU/memory affinity checks (required in containers)
+      # --smp 1          : restrict to 1 CPU core (dev workload)
+      # --memory 1G      : cap memory to 1 GB
+      # --reserve-memory 0M : release the OS memory reserve (not needed in dev)
+      # --node-id 0      : explicit node ID so Raft quorum self-elects immediately
+      # --check=false    : skip hardware compatibility checks (not relevant in Docker)
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      # ── Dual listener topology (fixes controller-broker quorum on Docker bridge) ──
+      # internal://  → used by containers on the oceantrust-network (redpanda hostname)
+      # external://  → used by host-side Python scripts (localhost:19092)
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+      # ── Schema Registry & Pandaproxy ──────────────────────────────────────
+      - --schema-registry-addr=http://0.0.0.0:8081
+      - --pandaproxy-addr=http://0.0.0.0:8082
+      - --advertise-pandaproxy-addr=http://localhost:8082
+    healthcheck:
+      test: [ "CMD-SHELL", "rpk cluster info --brokers localhost:9092 || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Redpanda Console: Web UI for topic inspection, schema browsing, and
+  # consumer group lag monitoring.
+  # UI: http://localhost:8080
+  # ---------------------------------------------------------------------------
+  console:
+    image: redpandadata/console:v2.7.2
+    container_name: redpanda-console
+    hostname: console
+    networks:
+      - oceantrust-network
+    ports:
+      - "8080:8080"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: "redpanda:9092"
+      KAFKA_SCHEMAREGISTRY_ENABLED: "true"
+      KAFKA_SCHEMAREGISTRY_URLS: "http://redpanda:8081"
+      LOGIN_ENABLED: "false"
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/api/health || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Qdrant: High-performance vector database for the RAG pipeline.
+  # Collections provisioned by: bin/scripts/provision_qdrant.sh
+  #   - fishing_regulations  (dim=3072, Cosine, on_disk=true)
+  #   - biological_manuals   (dim=3072, Cosine, on_disk=true)
+  #   - scientific_papers    (dim=3072, Cosine, on_disk=true)
+  #   - telemetry_vectors    (dim=3072, Cosine) ← Vector Ingestion Worker output
+  # REST API: http://localhost:6333
+  # gRPC API: localhost:6334
+  # Ref: docs/knowledge-ingestion.md, docs/vector-worker-spec.md
+  # ---------------------------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    hostname: qdrant
+    networks:
+      - oceantrust-network
+    ports:
+      - "6333:6333" # REST API + Qdrant Web UI
+      - "6334:6334" # gRPC API (used by Python qdrant-client for batch upserts)
+    volumes:
+      - qdrant-data:/qdrant/storage
+    environment:
+      # Enable Qdrant's built-in Web UI (accessible at http://localhost:6333/dashboard)
+      QDRANT__SERVICE__ENABLE_STATIC_CONTENT: "true"
+    healthcheck:
+      # Qdrant exposes /healthz on the REST port when the node is ready.
+      test: [ "CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Ollama: Local inference server for embedding and LLM fallback.
+  # Used by the Vector Ingestion Worker when the OpenAI Circuit Breaker is OPEN.
+  # Model pulled on first boot: nomic-embed-text (768-dim embeddings, ~274MB)
+  # Optional LLM for dev: llama3.2:1b (lightweight reasoning, ~1.3GB)
+  #
+  # NOTE: Ollama embeddings (768-dim) go to the telemetry_vectors_fallback
+  #       collection — NOT the production collection (3072-dim). See:
+  #       docs/vector-worker-spec.md §4 "Fallback Constraint".
+  #
+  # REST API: http://localhost:11434
+  # Ref: docs/adr/ADR-001-redpanda-vs-kafka.md
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:0.3.12
+    container_name: ollama
+    hostname: ollama
+    networks:
+      - oceantrust-network
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    # Pull the required embedding model on first start.
+    # The shell loop ensures Ollama's server is ready before the pull is attempted.
+    entrypoint: [ "/bin/sh", "-c" ]
+    command:
+      - |
+        ollama serve &
+        SERVER_PID=$$!
+        echo "[ollama] Waiting for server to be ready..."
+        until curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; do
+          sleep 2
+        done
+        echo "[ollama] Server ready. Pulling nomic-embed-text..."
+        ollama pull nomic-embed-text
+        echo "[ollama] nomic-embed-text ready. Embedding fallback available."
+        wait $$SERVER_PID
+    healthcheck:
+      # Ollama is ready when its /api/tags endpoint returns a 200 response.
+      test: [ "CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s # Generous start period — model pull can take time on first boot.
