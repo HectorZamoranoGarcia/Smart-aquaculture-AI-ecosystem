@@ -289,4 +289,18 @@ tagged for human operator review.
 
 ---
 
-OceanGuard AI — Hector Zamorano Garcia — MIT License 2026
+## Author
+
+Héctor Zamorano García
+
+## Notes
+
+* This project was developed for educational purposes to explore the synergy between multi-agent systems and real-time event streaming in industrial environments.
+* The development process embraced the vibe coding philosophy, focusing on high-level orchestration and rapid iteration through natural language interaction with advanced AI models.
+* This implementation serves as a technical sandbox to test next-generation AI tools and explore the shifting paradigm of software engineering, emphasizing that modern engineers must adapt to AI-native workflows to remain competitive.
+* The project demonstrates how to bridge the gap between probabilistic AI outputs and deterministic safety requirements in critical sectors like aquaculture.
+* Occasional AI assistance was utilized for complex logic verification, architectural brainstorming, and debugging distributed system latencies during the orchestration phase.
+
+## License
+
+Standard MIT License.
