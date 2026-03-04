@@ -1,12 +1,15 @@
-# Knowledge Ingestion Pipeline — OceanTrust AI
+# Knowledge Ingestion Pipeline — OceanGuard AI
 
-> **Maintainer:** Cloud Architecture Team
-> **Version:** 1.0.0
-> **Last Updated:** 2026-03-03
-> **Consumers:** Biologist Agent (RAG), Commercial Agent (quota lookups)
-> **Depends on:** [`docs/architecture.md §4`](architecture.md), [`schemas/iot_sensor_event.schema.json`](../schemas/iot_sensor_event.schema.json)
+> Maintainer: Cloud Architecture Team
+> Version: 2.0.0
+> Last Updated: 2026-03-04
+> Consumers: Biologist Agent (RAG), Commercial Agent (quota lookups)
+> Depends on: `docs/architecture.md §5`, `schemas/iot_sensor_event.schema.json`
 
-This document specifies the complete design for the **Knowledge Pre-processing Pipeline** — the offline batch system that transforms raw regulatory documents, biological manuals, and scientific literature into indexed vector embeddings queryable by the LangGraph debate agents at sub-100ms retrieval latency.
+This document specifies the complete design for the Knowledge Pre-processing Pipeline — the
+offline batch system that transforms raw regulatory documents, biological manuals, and
+scientific literature into indexed vector embeddings queryable by the LangGraph debate agents
+at sub-100ms retrieval latency.
 
 ---
 
@@ -46,7 +49,7 @@ flowchart TD
         DEDUP["② Deduplicator\n(SHA-256 content hash → doc_registry)"]
         PARSE["③ Document Parser\n(PyMuPDF, Unstructured.io)"]
         CHUNK["④ Chunker\n(LangChain RecursiveCharacterTextSplitter\nchunk_size=512 tokens, overlap=64)"]
-        EMBED["⑤ Embedder\n(text-embedding-3-large\ndim=3072 — OpenAI Batch API)"]
+        EMBED["⑤ Embedder\n(GoogleGenerativeAIEmbeddings\ngemini-embedding-001 dim=768)"]
         VALIDATE["⑥ Payload Validator\n(Pydantic v2 — ChunkPayload model)"]
         UPSERT["⑦ Qdrant Upsert\n(batch_size=256 points)"]
         AUDIT["⑧ Audit Logger\n(ingestion_log → TimescaleDB)"]
@@ -75,8 +78,8 @@ flowchart TD
 | Principle | Decision |
 |-----------|----------|
 | Idempotent ingestion | SHA-256 hash deduplication prevents re-embedding unchanged documents |
-| Batch embedding | OpenAI Batch API reduces embedding cost by ~50% vs. synchronous calls |
-| Separation of raw and processed | Raw PDFs preserved in S3 for re-chunking when strategy changes |
+| Google AI embeddings | Single provider for both LLM and embeddings — no cross-provider token mapping |
+| Separation of raw and processed | Raw PDFs preserved for re-chunking when strategy changes |
 | Schema-enforced payloads | Pydantic v2 validates every chunk payload before Qdrant upsert — no silent bad data |
 
 ---
@@ -172,48 +175,39 @@ gantt
 
 ### 4.1 Primary Model
 
-| Property | Value |
-|----------|-------|
-| **Model** | `text-embedding-3-large` |
-| **Provider** | OpenAI (production) / `nomic-embed-text` via Ollama (local dev fallback) |
-| **Output Dimensionality** | **3072** (native, no truncation) |
-| **Max Input Tokens** | 8191 tokens |
-| **Distance Metric** | Cosine similarity (normalized vectors — optimized for semantic relevance ranking) |
-| **Batch API** | OpenAI Batch API (async 24h window) — 50% cost reduction for bulk ingestion jobs |
-| **Synchronous API** | Used for on-demand re-embedding of updated documents only |
+| Property             | Value |
+|----------------------|-------|
+| Model                | `models/gemini-embedding-001` |
+| Provider             | Google AI (`langchain-google-genai`) |
+| Output Dimensionality| 768 (fixed, no truncation option) |
+| Max Input Tokens     | 2048 tokens |
+| Distance Metric      | Cosine similarity (normalized vectors) |
+| Client               | `GoogleGenerativeAIEmbeddings` (async via LangChain) |
+| Rate Limit Handling  | `max_retries=5` with exponential backoff on HTTP 429 |
 
 ### 4.2 Local Development Fallback
 
 ```python
-# config/embeddings.py
+# src/ingestion/knowledge_loader.py
 
 EMBEDDING_CONFIG = {
-    "production": {
-        "provider": "openai",
-        "model": "text-embedding-3-large",
-        "dimensions": 3072,
-        "api_key_env": "OPENAI_API_KEY",
-        "use_batch_api": True,
-    },
-    "development": {
-        "provider": "ollama",
-        "model": "nomic-embed-text",   # 768-dim — collection must be re-created for dev
-        "dimensions": 768,
-        "base_url": "http://localhost:11434",
-        "use_batch_api": False,
-    },
+    "model": "models/gemini-embedding-001",
+    "dimensions": 768,
+    "provider": "google",
+    "api_key_env": "GOOGLE_API_KEY",
 }
 ```
 
-> ⚠️ **Important:** The Qdrant collection `vector_size` must match the embedding model's output dimension. Production collections use `size=3072`. **Do not mix embeddings from different models in the same collection.** A separate `dev_*` collection prefix is used during local development.
+> The Qdrant collection `vector_size` must be 768 to match `models/gemini-embedding-001`.
+> Do not mix embeddings from different models in the same collection.
 
 ### 4.3 Embedding Cost Model
 
 | Scenario | Tokens | Estimated Cost |
 |----------|--------|----------------|
-| Initial corpus ingestion (~500 docs, avg 20 chunks/doc, 512 tok/chunk) | ~5.12M tokens | ~$0.51 (Batch API at $0.10/1M) |
-| Weekly regulatory bulletin update (~10 docs) | ~102K tokens | < $0.02 |
-| Monthly full re-index (strategy change) | ~5.12M tokens | ~$0.51 |
+| Initial corpus ingestion (~500 docs, avg 20 chunks/doc, 512 tok/chunk) | ~5.12M tokens | Free Tier / negligible on paid quota |
+| Weekly regulatory bulletin update (~10 docs) | ~102K tokens | Free Tier |
+| Monthly full re-index (strategy change) | ~5.12M tokens | Google AI Studio pricing |
 
 ---
 
@@ -327,7 +321,7 @@ class ChunkPayload(BaseModel):
     # ── Ingestion Audit ───────────────────────────────────────────────────
     ingested_at: str   # ISO 8601 datetime string
     embedding_model: str
-    """Model used to generate this vector. Example: 'text-embedding-3-large'.
+    """Model used to generate this vector. Example: 'models/gemini-embedding-001'.
     Must match across all chunks of the same document version."""
 
     airflow_run_id: str | None = None
@@ -358,7 +352,7 @@ class ChunkPayload(BaseModel):
   "page_number": 14,
   "source_url": "s3://oceantrust-docs/raw/regulations/NO/akvakulturloven-2024.pdf",
   "ingested_at": "2026-02-15T10:00:00+00:00",
-  "embedding_model": "text-embedding-3-large",
+  "embedding_model": "models/gemini-embedding-001",
   "airflow_run_id": "knowledge_ingestion__2026-02-15T10:00:00+00:00"
 }
 ```
@@ -389,8 +383,8 @@ flowchart LR
         T3B["parse_html\n(Unstructured.io)"]
         T3C["parse_csv_quotas\n(pandas → Markdown)"]
         T4["chunk_documents\n(RecursiveCharacterTextSplitter\n512t / 64t overlap)"]
-        T5["embed_batch\n(OpenAI Batch API submit)"]
-        T6["poll_batch_complete\n(HttpSensor — 24h timeout)"]
+        T5["embed_batch\n(GoogleGenerativeAIEmbeddings\ngemini-embedding-001)"]
+        T6["poll_ready\n(check embedding complete)"]
         T7["validate_payloads\n(Pydantic v2)"]
         T8A["upsert_qdrant\n(batch=256 pts)"]
         T8B["log_dlq_failures\n(S3 + TimescaleDB)"]
@@ -578,19 +572,18 @@ async def retrieve_regulatory_context(
     Enforces mandatory filters. Returns ranked chunks with citations.
     """
 
-    query_vector = await embed_text(query)  # text-embedding-3-large
+    query_vector = await embed_text(query)  # models/gemini-embedding-001
 
-    results = qdrant_client.search(
+    results = await client.query_points(
         collection_name=collection,
-        query_vector=query_vector,
+        query=query_vector,
         query_filter=build_regulatory_filter(
             jurisdictions=[farm_region],
             species=[species],
         ),
         limit=top_k,
-        score_threshold=score_threshold,  # Reject low-confidence matches
+        score_threshold=score_threshold,
         with_payload=True,
-        with_vectors=False,
     )
 
     return [
@@ -628,7 +621,7 @@ for COLLECTION in fishing_regulations biological_manuals scientific_papers; do
     -H "Content-Type: application/json" \
     -d '{
       "vectors": {
-        "size": 3072,
+        "size": 768,
         "distance": "Cosine",
         "on_disk": true
       },

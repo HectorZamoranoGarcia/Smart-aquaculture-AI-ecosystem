@@ -1,199 +1,258 @@
-# OceanGuard: Multi-Agent AI for Autonomous Aquaculture Decision-Making
+# OceanGuard AI
 
-> **Autonomous orchestration system** combining *event-driven architecture*, *RAG*, and *multi-agent debate* to issue real-time regulatory verdicts for Norwegian salmon farms.
+Multi-Agent Intelligence System for Autonomous Aquaculture Decision-Making
+
+Version: 3.0.0 | Status: Production-Ready | License: MIT
 
 ---
 
-## 📐 Architecture Overview
+## Overview
 
-The system is built on **strict layer separation** — the AI core never couples with the monitoring UI:
+OceanGuard AI is an event-driven, asynchronous platform that orchestrates LLM-based agents
+to issue real-time operational verdicts for Norwegian salmon farms. When IoT sensors detect
+threshold breaches, the system triggers a structured multi-agent debate governed by both
+regulatory law and financial constraints, producing an auditable, traceable decision record.
+
+The architecture is designed for scalability and regulatory compliance. The AI core is fully
+decoupled from the monitoring UI via Redpanda, and all decisions are backed by a deterministic
+safety layer that bypasses LLM inference for life-critical scenarios.
+
+---
+
+## Directory Structure
 
 ```
 OceanGuard/
-├── src/
-│   ├── agents/         # AI Core: LangGraph debate graph, state machine, RAG tools
-│   ├── ingestion/      # Knowledge loader (Qdrant) + telemetry producer (Redpanda)
-│   ├── processing/     # Vector worker — async embedding pipeline
-│   └── ui/             # Control Tower (Streamlit) — read-only, zero src/agents imports
-├── bin/
-│   ├── docker/         # docker-compose.yml: Redpanda, Qdrant, Ollama, Redpanda Console
-│   └── scripts/        # simulate_alert.py (smoke test), run_ui.sh / run_ui.bat
-├── docs/               # ADRs, architecture diagrams, agent specifications
-├── data/knowledge/     # Regulatory documents indexed in Qdrant
-└── logs/audit/debates/ # Immutable JSON debate traces (one file per event)
+|-- src/
+|   |-- agents/         LangGraph debate graph, state machine, RAG tools
+|   |-- ingestion/      knowledge_loader.py (Qdrant) + ocean_producer.py (Redpanda)
+|   |-- processing/     vector_worker.py — async embedding pipeline
+|   `-- ui/             dashboard.py — read-only Streamlit Control Tower
+|
+|-- bin/
+|   |-- docker/         docker-compose.yml: Redpanda, Qdrant, Redpanda Console
+|   `-- scripts/        simulate_alert.py, run_ui.sh, run_ui.bat, provision scripts
+|
+|-- docs/               Architecture specs, ADRs, agent and schema documentation
+|-- schemas/            JSON Schema definitions for IoT events and market data
+|-- data/knowledge/     Regulatory documents for Qdrant ingestion
+|-- logs/audit/debates/ Immutable JSON debate records (one per Kafka event processed)
+`-- config/             Farm configuration register
 ```
-
-**Data flow:**
-
-```
-IoT Sensor → Redpanda (ocean.telemetry.v1)
-                │
-                ├─► Vector Worker  →  Qdrant (embeddings)
-                └─► Agent Orchestrator (src/agents/main.py)
-                        │
-                        └─► LangGraph Debate Graph
-                                ├── Biologist Node
-                                ├── Commercial Node
-                                └── Judge Node → Audit JSON
-                                                     │
-                                             Streamlit UI (read-only)
-```
-
-UI ↔ AI decoupling is achieved via **Redpanda as a message bus** and **direct JSON audit file reads** — the UI never imports any module from `src/agents/`.
 
 ---
 
-## 🛡️ Biological Override Protocol (Life-First Protocol)
+## System Architecture
 
-The system implements a **deterministic code-level guard** inside `judge_node` that executes **before any LLM call**:
+The system is divided into four loosely coupled planes:
+
+```
+IoT Sensors / Smoke Test Script
+        |
+        v
+ocean_producer.py  --------->  Redpanda  (ocean.telemetry.v1)
+                                    |
+              +---------------------+---------------------+
+              |                                           |
+              v                                           v
+    vector_worker.py                          src/agents/main.py
+    (Qdrant embeddings)                       (LangGraph Orchestrator)
+                                                          |
+                                    +---------------------+---------------------+
+                                    |                     |                     |
+                                    v                     v                     v
+                               Biologist Node     Commercial Node          Judge Node
+                               (Risk/Law)         (ROI/Market)             (Arbitration)
+                                    |                     |                     |
+                                    +---------------------+                     |
+                                                                                v
+                                                                   logs/audit/debates/
+                                                                   (JSON audit trace)
+                                                                                |
+                                                                                v
+                                                               src/ui/dashboard.py
+                                                               (read-only Streamlit UI)
+```
+
+Redpanda operates a dual-listener topology. Internal Docker traffic uses
+`internal://redpanda:9092`. Host-side scripts (producers, consumers running outside Docker)
+use `external://127.0.0.1:19092`. This separation prevents IPv6 resolution failures on Windows.
+
+---
+
+## Deterministic Safety Layer — Hard Override Protocol
+
+The Judge node implements a code-level safety check that executes before any call to the
+Gemini API. This guard is not prompt-based — it is pure Python evaluated deterministically
+on every invocation of the judge node.
+
+Trigger condition: `dissolved_oxygen_mg_l < 4.0 mg/L`
+
+When triggered, the function returns immediately with:
 
 ```python
 # src/agents/graph.py — judge_node()
-_O2_LETHAL_THRESHOLD = 4.0  # mg/L
+
+_O2_LETHAL_THRESHOLD = 4.0  # mg/L — immediate mass mortality risk
 
 if current_o2 is not None and current_o2 < _O2_LETHAL_THRESHOLD:
+    log.warning("judge_hard_override_triggered", dissolved_oxygen_mg_l=current_o2)
     return {
-        "recommended_action": "HARVEST_NOW",
-        "confidence_score": 1.0,
-        "reasoning": "EMERGENCY BIOLOGICAL OVERRIDE: ...",
-        "cited_sources": ["HARD_OVERRIDE", "Akvakulturloven_§12"],
+        "recommended_action":  "HARVEST_NOW",
+        "confidence_score":    1.0,
+        "judge_verdict":       "EMERGENCY BIOLOGICAL OVERRIDE: ...",
+        "cited_sources":       ["HARD_OVERRIDE", "Akvakulturloven_§12"],
+        "hallucination_detected": False,
     }
 ```
 
-**Why deterministic and not prompt-based:**
-- LLMs cannot guarantee 100% instruction compliance under all context conditions
-- O₂ < 4.0 mg/L implies mass mortality risk within minutes
-- Norwegian Aquaculture Act (*Akvakulturloven* §12) establishes absolute legal thresholds
+Rationale for a deterministic guard over prompt engineering:
 
-The override **returns immediately**, skipping the Gemini API call entirely — zero latency, zero cost in the worst biological scenario.
+- LLMs cannot guarantee 100% instruction compliance under all context conditions.
+- Oxygen below 4.0 mg/L causes mass mortality within minutes, not hours.
+- Akvakulturloven §12 establishes legally binding treatment thresholds with no exceptions.
+- The override emits zero API calls, achieving immediate response with no latency or cost.
 
----
-
-## 🥞 Tech Stack
-
-| Layer | Technology | Role |
-|---|---|---|
-| **Agent Orchestration** | [LangGraph](https://langchain-ai.github.io/langgraph/) | Multi-agent state machine with revision rounds |
-| **LLM** | Google Gemini 2.5 Flash Lite | Biologist, Commercial, Judge agents |
-| **Embeddings** | Google `gemini-embedding-001` | Regulatory document vectorisation (768 dims) |
-| **Vector DB** | [Qdrant](https://qdrant.tech/) v1.9+ | Semantic search over regulatory knowledge base |
-| **Message Broker** | [Redpanda](https://redpanda.com/) | Kafka-compatible telemetry bus |
-| **UI** | [Streamlit](https://streamlit.io/) | Control Tower — debate history and RAG search |
-| **Containers** | Docker Compose | Full dev environment orchestration |
-| **Language** | Python 3.11+ | Async/await via `asyncio` + `aiokafka` |
+The Biologist and Commercial nodes still run prior to the Judge. Their arguments are captured
+in the audit trace even when the override fires, preserving a complete evidentiary record.
 
 ---
 
-## 🚀 Setup & Execution
+## Tech Stack
+
+| Layer              | Technology                       | Notes                                   |
+|--------------------|----------------------------------|-----------------------------------------|
+| Agent Orchestration| LangGraph 0.1+                   | Finite state machine, max 1 revision    |
+| LLM                | Google Gemini 2.5 Flash Lite     | max_retries=5 for Free Tier 429 errors  |
+| Embeddings         | models/gemini-embedding-001      | 768-dimension vectors, Cosine distance  |
+| Vector DB          | Qdrant latest                    | query_points() API, metadata filtering  |
+| Message Broker     | Redpanda                         | Kafka-compatible, dual-listener setup   |
+| UI                 | Streamlit                        | No src/agents imports — fully decoupled |
+| Containers         | Docker Compose                   | Single-node dev configuration           |
+| Language           | Python 3.11+                     | asyncio + aiokafka throughout           |
+
+---
+
+## Setup and Deployment
 
 ### Prerequisites
-- Docker Desktop (WSL2 on Windows) or Docker Engine on Linux/macOS
-- Python 3.11+
-- An active `GOOGLE_API_KEY` ([Google AI Studio](https://aistudio.google.com/))
 
-### 1. Clone and set up the environment
+- Docker Desktop with WSL2 backend (Windows) or Docker Engine (Linux/macOS)
+- Python 3.11 or later
+- A valid GOOGLE_API_KEY from Google AI Studio
+
+### Step 1 — Clone and install
 
 ```bash
 git clone https://github.com/HectorZamoranoGarcia/Smart-aquaculture-AI-ecosystem.git
 cd Smart-aquaculture-AI-ecosystem
 
-# Create and activate virtual environment
 python -m venv .venv
-source .venv/Scripts/activate    # Windows (Git Bash)
-# source .venv/bin/activate      # Linux / macOS
+source .venv/Scripts/activate   # Windows Git Bash
+# source .venv/bin/activate     # Linux / macOS
 
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Configure environment variables
+### Step 2 — Configure environment variables
 
 ```bash
 export GOOGLE_API_KEY="your-key-here"
-export KAFKA_BOOTSTRAP_SERVERS="127.0.0.1:19092"   # IP avoids IPv6 issues on Windows
+export KAFKA_BOOTSTRAP_SERVERS="127.0.0.1:19092"
 export PYTHONPATH=$(pwd)
 ```
 
-### 3. Start the infrastructure (Redpanda + Qdrant)
+The orchestrator validates both variables at startup and raises RuntimeError if either
+is missing, providing a clear message before any Kafka or LLM connection is attempted.
+
+### Step 3 — Start infrastructure
 
 ```bash
 docker compose -f bin/docker/docker-compose.yml up -d redpanda qdrant
 
-# Verify Redpanda is healthy:
-docker compose -f bin/docker/docker-compose.yml ps
+# Verify broker readiness
+docker exec redpanda rpk cluster info
 ```
 
-### 4. Index the regulatory knowledge base
+### Step 4 — Index the regulatory knowledge base
 
 ```bash
-# Indexes docs in data/knowledge/ → fishing_regulations collection in Qdrant
 python -m src.ingestion.knowledge_loader --data-dir data/knowledge
 ```
 
-### 5. Start the agent orchestrator (Backend)
+This command reads all Markdown documents from `data/knowledge/`, chunks them, generates
+768-dimension embeddings via `models/gemini-embedding-001`, and upserts them to the
+`fishing_regulations` collection in Qdrant.
+
+### Step 5 — Start the agent orchestrator
 
 ```bash
-# Terminal 1 — Kafka consumer + LangGraph debate engine
+# Terminal 1
 python -m src.agents.main
 ```
 
-### 6. Send a test alert
+The orchestrator connects to Redpanda on `KAFKA_BOOTSTRAP_SERVERS`, joins consumer group
+`cg-agent-orchestrator`, and processes each alert event through the LangGraph debate graph.
+Kafka offsets are committed manually after the full debate completes — no event is lost
+if the process crashes mid-debate.
+
+### Step 6 — Send a test alert
 
 ```bash
-# Terminal 2 — Smoke test: critical O₂ + lice breach
-python bin/scripts/simulate_alert.py \
-    --farm-id "NORD-02" \
-    --oxygen 4.1 \
-    --lice 0.85
+# Terminal 2
+python bin/scripts/simulate_alert.py --farm-id "NORD-02" --oxygen 4.1 --lice 0.85
 
-# Deterministic override (O₂ < 4.0 → HARVEST_NOW, no LLM call):
+# Trigger the deterministic Hard Override
 python bin/scripts/simulate_alert.py --farm-id "NORD-02" --oxygen 0.0 --lice 2.0
 ```
 
-### 7. Launch the Control Tower UI
+### Step 7 — Launch the Control Tower UI
 
 ```bash
-# Windows (CMD / PowerShell)
+# Windows CMD / PowerShell
 bin\scripts\run_ui.bat
 
 # Git Bash / WSL / Linux
 ./bin/scripts/run_ui.sh
-
-# Available at http://localhost:8501
 ```
+
+The UI is available at `http://localhost:8501`. It reads debate records from
+`logs/audit/debates/` and exposes a RAG search panel backed by Qdrant. It imports
+zero modules from `src/agents/` — all coupling is through the filesystem and Qdrant.
 
 ---
 
-## 🤖 Decision Flow: The Three Agents
+## Agent Roles
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                  JUDGE NODE (Pre-LLM Check)                     │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ O₂ < 4.0 mg/L? → HARVEST_NOW (deterministic, no LLM)   │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                        ↓ (if O₂ OK)                            │
-├─────────────────┬──────────────────┬───────────────────────────┤
-│  🔬 BIOLOGIST   │  📈 COMMERCIAL   │  ⚖️ JUDGE                 │
-│                 │                  │                           │
-│ Evaluates:      │ Evaluates:       │ Final arbitration:        │
-│ • Water params  │ • Current market │ • Verifies legal          │
-│ • Mortality     │   price          │   compliance (RAG)        │
-│   risk          │ • ROI projection │ • Detects hallucinations  │
-│ • Akvakulturloven│ • Treatment cost│ • Issues verdict:         │
-│   §12 compliance│ • Price trend    │   HARVEST_NOW /           │
-│                 │                  │   HARVEST_PARTIAL /       │
-│                 │                  │   HOLD / TREAT            │
-└─────────────────┴──────────────────┴───────────────────────────┘
-```
+### Biologist Node — Risk Assessment
 
-**Judge's golden rule:** Biological safety and *Akvakulturloven* legal compliance always override financial uncertainty. Missing market data is treated as a **Neutral** position — never as justification for HOLD during a biological emergency.
+Queries the `fishing_regulations` Qdrant collection using the farm's jurisdiction as a
+required metadata filter. Produces a structured risk assessment citing specific legal
+articles. Evaluates dissolved oxygen, sea lice count, temperature, and mortality indicators
+against Norwegian Akvakulturloven thresholds.
+
+### Commercial Node — Financial ROI
+
+Evaluates current market conditions, historical price trends, and harvest cost projections.
+Produces a structured financial argument for or against immediate harvest. If no market data
+is available, the node returns a neutral position — the Judge treats this as neither
+supporting nor opposing the Biologist's recommendation.
+
+### Judge Node — Final Arbitration
+
+Receives arguments from both prior nodes, checks Biologist legal citations against the RAG
+context to detect hallucinations, then emits a final structured verdict. Before invoking the
+LLM, the Hard Override check runs — if oxygen is below the lethal threshold, the LLM is
+never called and HARVEST_NOW is returned immediately with confidence 1.0.
+
+Valid verdict actions: `HARVEST_NOW`, `HARVEST_PARTIAL`, `HOLD`, `TREAT`.
 
 ---
 
-## 📋 Audit & Compliance
+## Audit and Compliance
 
-Every debate generates an immutable JSON file at `logs/audit/debates/<YYYY-MM-DD>/<debate_id>.json`:
+Every debate produces an immutable JSON record at
+`logs/audit/debates/<YYYY-MM-DD>/<debate_id>.json`:
 
 ```json
 {
@@ -211,24 +270,23 @@ Every debate generates an immutable JSON file at `logs/audit/debates/<YYYY-MM-DD
 }
 ```
 
-These records enable:
-- **Regulatory traceability**: Every autonomous decision is documented with its legal basis
-- **Hallucination auditing**: `hallucination_detected: true` escalates to human operators
-- **Replay & debugging**: The complete debate state is fully reproducible
-- **Compliance retention**: Configurable via `AUDIT_LOG_DIR` environment variable
+Records are sorted by file modification time. The Streamlit UI renders the newest debate
+first. The `hallucination_detected` flag triggers an escalation log entry at ERROR level,
+tagged for human operator review.
 
 ---
 
-## ⚡ Key Architectural Decisions
+## Key Design Decisions
 
-| Decision | Alternative considered | Reason |
-|---|---|---|
-| Deterministic pre-LLM override | Prompt engineering alone | LLMs cannot guarantee 100% instructional compliance |
-| Redpanda as message bus | Direct HTTP polling | Full UI ↔ Backend decoupling + message replay |
-| Qdrant for RAG | ChromaDB / FAISS | Native async client, gRPC support, metadata filters |
-| `gemini-2.5-flash-lite` | GPT-4o-mini | Free Tier compatible, `max_retries=5` for HTTP 429 |
-| Manual Kafka offset commit | Auto-commit | Offset committed only AFTER debate completes — zero event loss |
+| Decision                         | Alternative             | Reason                                               |
+|----------------------------------|-------------------------|------------------------------------------------------|
+| Deterministic pre-LLM override   | Prompt engineering only | LLMs cannot guarantee compliance in all contexts     |
+| Redpanda dual-listener topology  | Single port binding     | Isolates Docker-internal and host-external traffic   |
+| Manual Kafka offset commit       | Auto-commit             | Offset committed only after debate — zero event loss |
+| Qdrant query_points() API        | .search() deprecated    | API changed in qdrant-client >= 1.7.0                |
+| max_retries=5 on ChatGoogleAI    | No retry                | Free Tier quota: HTTP 429 backoff handled by LangChain|
+| gzip compression on producer     | snappy                  | No native snappy library required; stdlib gzip works  |
 
 ---
 
-*OceanGuard AI — Héctor Zamorano García — MIT License 2026*
+OceanGuard AI — Hector Zamorano Garcia — MIT License 2026

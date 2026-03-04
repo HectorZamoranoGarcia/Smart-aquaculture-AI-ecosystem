@@ -1,12 +1,13 @@
 # Agent Orchestration — Algorithmic Debate (LangGraph)
 
-> **Maintainer:** Cloud Architecture Team
-> **Version:** 1.0.0
-> **Last Updated:** 2026-03-03
-> **Trigger Topic:** `ocean.alerts.v1`
-> **Output Topic:** `ocean.agent.decisions.v1`
+> Maintainer: Cloud Architecture Team
+> Version: 2.0.0
+> Last Updated: 2026-03-04
 
-This document defines the core intelligence layer of OceanTrust AI. When a threshold breach occurs in the farm telemetry, a multi-agent debate is orchestrated via **LangGraph**. Three specialized LLM agents (Biologist, Commercial, Judge) interact to evaluate the alert from conflicting perspectives and synthesize a balanced, auditable operational decision.
+This document defines the core intelligence layer of OceanGuard AI. When a threshold breach
+occurs in farm telemetry, a multi-agent debate is orchestrated via LangGraph. Three specialized
+LLM agents (Biologist, Commercial, Judge) interact to evaluate the alert from conflicting
+perspectives and synthesize a balanced, auditable operational decision.
 
 ---
 
@@ -16,199 +17,192 @@ This document defines the core intelligence layer of OceanTrust AI. When a thres
 2. [Shared DebateState Schema](#2-shared-debatestate-schema)
 3. [Agent 1: The Biologist](#3-agent-1-the-biologist)
 4. [Agent 2: The Commercial Trader](#4-agent-2-the-commercial-trader)
-5. [Agent 3: The Arbitrator (Judge)](#5-agent-3-the-arbitrator-judge)
-6. [Tool Registry](#6-tool-registry)
-7. [Mitigation of Hallucinations](#7-mitigation-of-hallucinations)
+5. [Agent 3: The Arbitrator — Judge](#5-agent-3-the-arbitrator--judge)
+6. [Hard Override Protocol](#6-hard-override-protocol)
+7. [Tool Registry](#7-tool-registry)
+8. [Hallucination Mitigation](#8-hallucination-mitigation)
 
 ---
 
 ## 1. Orchestration State Machine
 
-The orchestration flow is modeled as a cyclic directed graph (LangGraph `StateGraph`). The graph coordinates tool execution, manages the shared state, and enforces the debate turn order.
+The orchestration flow is modeled as a cyclic directed graph (`StateGraph`). The graph
+coordinates tool execution, manages shared state, and enforces debate turn order.
 
 ```mermaid
 stateDiagram-v2
     direction TB
 
-    [*] --> InitContext : Alert Received
+    [*] --> HardOverrideCheck : Alert Received
+
+    HardOverrideCheck --> ImmediateHarvest : O2 < 4.0 mg/L
+    ImmediateHarvest --> AuditSink : Write JSON
+
+    HardOverrideCheck --> AssemblerNode : O2 >= 4.0 mg/L
 
     state "Data Assembly Phase" as AsmPhase {
-        InitContext --> FetchMarketContext
-        FetchMarketContext --> FetchRAGContext
+        AssemblerNode --> FetchRAGContext
     }
 
-    AsmPhase --> BiologistTurn : Pass populated\nDebateState
+    AsmPhase --> BiologistTurn
 
     state "Debate Phase" as DebatePhase {
-        BiologistTurn --> CommercialTurn : Biological assessment\nadded to state
-        CommercialTurn --> JudgeTurn : Financial assessment\nadded to state
-
-        JudgeTurn --> BiologistTurn : Request Revision\n(if arguments weak/conflicting)
-        note right of JudgeTurn
-            Max revisions = 1.
-            Prevents infinite debate loops.
-        end note
+        BiologistTurn --> CommercialTurn
+        CommercialTurn --> JudgeTurn
+        JudgeTurn --> BiologistTurn : Request Revision (max 1)
     }
 
-    JudgeTurn --> FinalDecision : Emit Verdict
-    FinalDecision --> [*] : Publish to\nocean.agent.decisions.v1
+    JudgeTurn --> AuditSink : Emit Verdict
+    AuditSink --> [*]
 ```
 
 ---
 
 ## 2. Shared DebateState Schema
 
-The `DebateState` is a Python `TypedDict` passed sequentially through the LangGraph nodes. It acts as the immutable working memory for the session. Agents append their outputs to this state but cannot modify prior entries.
-
-> *Note: By aggregating all context up-front before the LLM nodes run, we reduce round-trips and tool-calling latency.*
+All nodes read from and write to a single `DebateState` TypedDict. No node calls another
+node directly — communication is exclusively through state mutations.
 
 ```python
-from typing import TypedDict, Annotated, List, Dict, Optional
-import operator
-
 class DebateState(TypedDict):
-    # ── Orchestration Metadata ──────────────────────────────────────────────
-    debate_id: str                   # UUIDv4 for audit tracking
-    farm_id: str                     # e.g., "NO-FARM-0047"
-    trigger_alerts: List[Dict]       # Original alerts from ocean.alerts.v1
-    revision_count: int              # Tracks debate rounds (default 0, max 1)
-
-    # ── Raw Context (Assembled via Orchestrator, read-only for Agents) ──────
-    telemetry_snapshot: Dict         # Latest sensor readings (temp, O2, lice)
-    market_snapshot: Dict            # Latest price tick from market.prices.v1
-    rag_context: str                 # Pre-fetched laws/manuals from Qdrant
-    historical_trends: str           # Summarized timeseries text (30d trends)
-
-    # ── Agent Outputs (Appended during Graph Execution) ─────────────────────
-    # Annotated with operator.add allows LangGraph to append to the list
-    # rather than overwrite, preserving the history of revisions.
-    biologist_arguments: Annotated[List[str], operator.add]
-    commercial_arguments: Annotated[List[str], operator.add]
-
-    # ── Final Output ────────────────────────────────────────────────────────
-    judge_verdict: Optional[str]     # Final synthesis narrative
-    recommended_action: Optional[str]# "HARVEST_NOW" | "HARVEST_PARTIAL" | "HOLD" | "TREAT"
-    confidence_score: Optional[float]# 0.0 to 1.0
-    cited_sources: List[str]         # Combine RAG chunk IDs and API queries used
+    debate_id:              str
+    farm_id:                str
+    trigger_alerts:         list[dict]
+    telemetry_snapshot:     dict          # Full Kafka payload from ocean.telemetry.v1
+    rag_context:            str           # Regulatory chunks retrieved by Biologist
+    market_snapshot:        dict          # Market data for Commercial node
+    historical_trends:      str
+    biologist_arguments:    list[str]
+    commercial_arguments:   list[str]
+    judge_verdict:          str | None
+    recommended_action:     str | None    # HARVEST_NOW | HARVEST_PARTIAL | HOLD | TREAT
+    confidence_score:       float | None
+    hallucination_detected: bool | None
+    cited_sources:          list[str]
+    revision_count:         int
 ```
+
+The `telemetry_snapshot` field carries the full raw Kafka payload. The Hard Override check
+reads `telemetry_snapshot["water_quality"]["dissolved_oxygen_mg_l"]` before any node
+invokes an LLM.
 
 ---
 
 ## 3. Agent 1: The Biologist
 
-**Role:** Defender of animal welfare, biological health, and strictly bound by jurisdiction-specific aquaculture regulations.
-**Core Directive:** Recommend actions that minimize fish stress and maintain absolute legal compliance, regardless of financial cost.
+Role: Risk Assessment and Regulatory Compliance Officer
 
-### Master System Prompt
+The Biologist node queries the `fishing_regulations` Qdrant collection using the farm's
+jurisdiction as a required metadata filter. It evaluates:
 
-```text
-You are the **Lead Marine Biologist & Compliance Officer** for OceanTrust AI, overseeing salmon farm operations.
-Your sole priorities are animal welfare, biological health, and strict adherence to environmental regulations. You DO NOT care about financial markets, spot prices, or trading margins.
+- Dissolved oxygen levels against Akvakulturloven §12 thresholds
+- Sea lice counts against the Norwegian 0.5 per fish regulatory limit
+- Water temperature against species-specific stress thresholds
+- Current alert severity and mortality risk indicators
 
-You will be provided with:
-1. Real-time sensor telemetry (Oxygen, Temperature, Sea Lice counts, Mortality).
-2. Regulatory context retrieved from the legal database (e.g., Norwegian Akvakulturloven).
-3. (If applicable) Previous arguments made in this debate.
-
-Your task is to evaluate the telemetry against the legal and biological context.
-- If regulatory thresholds (e.g., lice > 0.5 per fish) are breached or imminent, you MUST mandate immediate biological intervention (e.g., emergency harvest or chemical treatment).
-- Identify compounding biological risks (e.g., high temperature + low oxygen).
-
-**Output Requirements:**
-1. State your biological risk assessment clearly.
-2. Explicitly cite the provided regulatory documents (using their doc_id) to justify your stance.
-3. Conclude with a strict biological recommendation: [HARVEST_NOW, HARVEST_PARTIAL, HOLD, TREAT]
-```
-
-### Callable Tools
-- `calculate_biomass_stress_index(temp_c, oxygen_mg, fish_avg_weight)` -> `float`
-- `query_vector_knowledge_base(query, collection="biological_manuals")` -> `str` *(Used if the orchestrator-provided context is insufficient)*
+The node produces a structured argument that includes specific legal article citations
+retrieved from the RAG context. If retrieved chunks do not support a legal claim, the
+Biologist is expected to qualify its argument — the Judge checks this during hallucination
+detection.
 
 ---
 
 ## 4. Agent 2: The Commercial Trader
 
-**Role:** Profit maximizer. Analyzes market conditions, supply/demand pressure, and forward contracts to optimize harvest timing.
-**Core Directive:** Maximize portfolio yield by holding fish during price dips and executing harvests at local price maxima.
+Role: Financial ROI Analyst
 
-### Master System Prompt
+The Commercial node evaluates the harvest decision from a purely economic perspective:
 
-```text
-You are the **Senior Commodities Trader & Harvesting Strategist** for OceanTrust AI.
-Your sole priority is maximizing the financial yield of the farm's biomass based on the Oslo Fish Pool spot prices, futures contracts, and supply/demand sentiment.
-While you acknowledge severe biological risks, your instinct is to delay harvesting if the current market price is depressed, or accelerate harvesting if prices are peaking.
+- Current fish market prices (NOK per kg, Atlantic Salmon)
+- Projected price trends for the following 2-4 weeks
+- Biomass at current weight versus target harvest weight delta
+- Feed conversion ratio impact of delayed harvest
 
-You will be provided with:
-1. The current market snapshot (Spot price, Bid/Ask spread, 30-day volatility).
-2. The argument just submitted by the Biologist Agent.
-3. Estimated current biomass available in the cage.
+When market data is unavailable or incomplete, the node returns a neutral position. Per the
+Judge's Commercial Silence Rule, a neutral position is never used as grounds to issue HOLD
+during a biological emergency.
 
-Your task is to evaluate the Biologist's recommendation through a financial lens.
-- If the Biologist dictates HARVEST_NOW but the spot price is down 5% today, you must calculate the exact financial loss of that premature harvest and argue for a HOLD or DELAY if biological survival allows it.
-- If the market is at a premium, you should aggressively support harvesting, even if biology is stable.
+---
 
-**Output Requirements:**
-1. State your financial projection and opportunity cost analysis.
-2. Critique the financial impact of the Biologist's recommendation.
-3. Conclude with a strict commercial recommendation: [HARVEST_NOW, HARVEST_PARTIAL, HOLD, TREAT]
+## 5. Agent 3: The Arbitrator — Judge
+
+Role: Final Arbitration and Verdict Emission
+
+The Judge node synthesizes arguments from both prior nodes and emits a binding operational
+verdict. Before invoking the Gemini API, the Hard Override check runs. If oxygen is below
+the lethal threshold, the function returns immediately without an LLM call.
+
+For the standard LLM path, the Judge:
+
+1. Verifies that Biologist legal citations exist in the RAG context (`verify_regulatory_claim`)
+2. Checks for hallucinated facts or invented regulatory articles
+3. Weighs biological risk against financial impact
+4. Emits a structured JSON verdict with reasoning, confidence score, and cited sources
+
+Valid verdict actions: `HARVEST_NOW`, `HARVEST_PARTIAL`, `HOLD`, `TREAT`
+
+Minimum confidence scores:
+- Hard Override path: 1.0 (deterministic)
+- Biological emergency (O2 4.0-6.0, lice > 0.5): >= 0.85 expected
+- Standard arbitration: 0.5 minimum
+
+---
+
+## 6. Hard Override Protocol
+
+The Hard Override is a deterministic code-level guard in `judge_node` that fires before any
+LLM invocation. It is the highest-priority rule in the entire system.
+
+Trigger: `dissolved_oxygen_mg_l < 4.0 mg/L`
+
+Return value when triggered:
+
+```python
+{
+    "judge_verdict":          "EMERGENCY BIOLOGICAL OVERRIDE: ...",
+    "recommended_action":     "HARVEST_NOW",
+    "confidence_score":       1.0,
+    "hallucination_detected": False,
+    "cited_sources":          ["HARD_OVERRIDE", "Akvakulturloven_§12"],
+    "revision_count":         revision,   # preserved, no increment
+}
 ```
 
-### Callable Tools
-- `get_current_market_data(species, product_form)` -> `dict`
-- `calculate_harvest_opportunity_cost(current_biomass_kg, current_spot_price, futures_30d_price)` -> `dict`
+The override also applies to future extensions. Any code modification that removes this
+check or conditions it on LLM output is a critical regression.
+
+Commercial Silence Rule (LLM path only): if the Commercial Agent provides no market data,
+the Judge treats this as a neutral position and does not use the absence of data as
+justification for HOLD in a biological emergency.
 
 ---
 
-## 5. Agent 3: The Arbitrator (Judge)
+## 7. Tool Registry
 
-**Role:** The decisive executive. Weighs the (often conflicting) arguments from the Biologist and the Commercial Trader, identifies any hallucinations, and issues the final, binding operational command.
-**Core Directive:** Ensure legal compliance is never compromised, while salvaging maximum financial value. Produce a highly structured, auditable decision log.
+Tools are LangChain `@tool`-decorated async functions available to the Judge node:
 
-### Master System Prompt
+| Tool                      | Purpose                                              |
+|---------------------------|------------------------------------------------------|
+| `query_vector_knowledge_base` | Semantic search in Qdrant with jurisdiction filter   |
+| `verify_regulatory_claim`     | Checks Biologist citations against RAG context       |
+| `emit_final_verdict`          | Structured output emission (required by Judge)       |
 
-```text
-You are the **Executive Arbitrator (The Judge)** for OceanTrust AI.
-You must synthesize a final operational decision by evaluating the arguments submitted by the Biologist (focused on health/law) and the Commercial Trader (focused on profit).
-
-**Rules of Arbitration:**
-1. **Absolute Compliance:** If the Biologist cites a hard legal threshold (e.g., Norwegian law mandates treatment at 0.5 lice/fish), you CANNOT override this for financial gain. The law is absolute.
-2. **Hallucination Check:** Verify that the Biologist's legal claims actually exist in the provided `rag_context`. If they hallucinated a law, discard their argument.
-3. **Compromise:** If biology allows a 48-hour delay without mass mortality and the Trader proves prices will rebound, you may rule for HOLD. If the conflict is irreconcilable, rule HARVEST_PARTIAL to hedge risk.
-
-**Output Requirements:**
-You must return a structured JSON synthesis containing exactly these fields:
-- `reasoning`: A step-by-step breakdown weighing both sides (max 150 words).
-- `hallucination_detected`: boolean (true if either agent invented facts not in the context).
-- `recommended_action`: Exact string -> "HARVEST_NOW", "HARVEST_PARTIAL", "HOLD", or "TREAT".
-- `confidence_score`: Float between 0.0 and 1.0.
-- `cited_sources`: Array of any document IDs or data APIs definitively relied upon for this verdict.
-```
-
-### Callable Tools
-- `verify_regulatory_claim(legal_text_snippet)` -> `bool` *(Checks exact string match against indexed RAG chunks to detect hallucinations)*
-- `emit_final_verdict(verdict_json)` -> `str` *(Terminal tool that ends the LangGraph execution)*
+All tools use `GoogleGenerativeAIEmbeddings` with `models/gemini-embedding-001` and call
+`client.query_points()` (not the deprecated `client.search()`) for Qdrant lookups.
 
 ---
 
-## 6. Tool Registry
+## 8. Hallucination Mitigation
 
-The following technical functions are bound to the agents. They represent the only mechanisms by which LLMs can interact with external systems.
+OceanGuard AI implements a three-layer hallucination defense:
 
-| Tool Name | Assigned To | Execution Target | Purpose |
-|-----------|------------|------------------|---------|
-| `query_vector_knowledge_base` | Biologist, Judge | Qdrant gRPC API | Semantic search against laws & manuals. Injects mandatory jurisdiction filters. |
-| `calculate_biomass_stress_index` | Biologist | Python Math Module | Deterministic formula calculating survival probability based on Temp + O2 + Fish weight. |
-| `get_current_market_data` | Commercial | `market.prices.v1` (Cache) | Latest spot and futures pricing. |
-| `calculate_harvest_opportunity_cost`| Commercial | Python Math Module | Projects NOK value of current biomass vs. 30-day delayed biomass. |
-| `verify_regulatory_claim` | Judge | Qdrant Scroll API | Anti-hallucination check ensuring cited text exists in DB. |
-| `request_debate_revision` | Judge | LangGraph Engine | Routes graph back to Biologist if arguments are fundamentally flawed (increments `revision_count`). |
+Layer 1 — RAG grounding: The Biologist Agent only makes legal claims that can be traced to
+chunks retrieved from Qdrant. Retrieved text is injected into the LLM context, not paraphrased.
 
----
+Layer 2 — Judge verification: The Judge calls `verify_regulatory_claim` to check whether the
+cited regulatory text exists in the RAG context with a cosine similarity score above 0.92.
+If not found, `hallucination_detected` is set to `true` in the verdict.
 
-## 7. Mitigation of Hallucinations
-
-In critical infrastructure, LLM hallucinations are unacceptable. This architecture mitigates them through the **Structure-Constrained Debate Pattern**:
-
-1. **Pre-Fetched Context:** Agents are heavily constrained by the `telemetry_snapshot` and `rag_context` populated by the orchestrator *before* the LLMs run. They are prompted to reason *only* over this state.
-2. **Adversarial Critique:** The Commercial agent actively attempts to poke holes in the Biologist's argument, and vice versa. If an agent invents a data point to win the debate, the opposing agent (who has the same pristine state) is prompted to call it out.
-3. **Deterministic Verification:** The Judge has access to the `verify_regulatory_claim` tool. Before approving a drastic action based on a law, it verifies the semantic claim against the vector store. If verification fails, the Judge flags `hallucination_detected = true` and downgrades the confidence score, routing the alert to human ops.
+Layer 3 — Operator escalation: When `hallucination_detected` is true, the orchestrator logs
+an ERROR-level event tagged `ESCALATE_TO_HUMAN_OPS` in the structlog output. The verdict
+is still committed (offset is not held) but the audit record is flagged for review.
