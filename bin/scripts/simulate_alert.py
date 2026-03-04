@@ -24,7 +24,7 @@ Usage:
         --lice 0.55
 
 Environment variables:
-    KAFKA_BOOTSTRAP_SERVERS  — default: localhost:9092
+    KAFKA_BOOTSTRAP_SERVERS  — default: 127.0.0.1:19092  (IP avoids IPv6 issues on Windows)
     TELEMETRY_TOPIC          — default: ocean.telemetry.v1
 """
 
@@ -34,6 +34,7 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 import uuid
 from datetime import UTC, datetime
 
@@ -209,8 +210,20 @@ async def publish_alert(
         bootstrap_servers=bootstrap_servers,
         acks="all",
         compression_type="gzip",
+        # Fail fast — better to surface the error immediately than hang
+        # the subprocess for 30+ seconds while the UI waits.
+        request_timeout_ms=5000,
+        retry_backoff_ms=500,
+        metadata_max_age_ms=3000,
     )
-    await producer.start()
+
+    try:
+        await producer.start()
+    except Exception as exc:
+        print(f"[simulate_alert] ERROR: cannot connect to broker at {bootstrap_servers}: {exc}",
+              file=sys.stderr)
+        raise SystemExit(1) from exc
+
     try:
         await producer.send_and_wait(topic=topic, key=key, value=payload)
         log.info(
@@ -223,6 +236,9 @@ async def publish_alert(
             oxygen_mg_l=oxygen_mg_l,
             lice_per_fish=lice_per_fish,
         )
+    except Exception as exc:
+        print(f"[simulate_alert] ERROR: failed to publish event: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     finally:
         await producer.stop()
 
@@ -260,7 +276,9 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    # 127.0.0.1 avoids IPv6 / getaddrinfo resolution failures on Windows.
+    # KAFKA_BOOTSTRAP_SERVERS env var always takes priority.
+    bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:19092")
     topic     = os.getenv("TELEMETRY_TOPIC", "ocean.telemetry.v1")
 
     log.info(

@@ -21,8 +21,8 @@ Usage:
 Environment variables (see .env.example):
     KAFKA_BOOTSTRAP_SERVERS  — default: localhost:9092
     ORCHESTRATOR_TOPIC       — default: ocean.telemetry.v1
-    OPENAI_API_KEY           — required for LLM debate nodes
-    OPENAI_CHAT_MODEL        — default: gpt-4o-mini
+    GOOGLE_API_KEY           — required for LLM debate nodes
+    GEMINI_CHAT_MODEL        — default: gemini-2.5-flash-lite
     QDRANT_HOST              — default: localhost
     QDRANT_PORT              — default: 6333
     AUDIT_LOG_DIR            — default: logs/audit/debates
@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -318,12 +319,42 @@ class DebateOrchestrator:
 
 
 # ---------------------------------------------------------------------------
+# Environment validation
+# ---------------------------------------------------------------------------
+
+
+def _validate_environment() -> None:
+    """Validate that all required environment variables are present.
+
+    Raises:
+        RuntimeError: If any required variable is missing, with a clear
+            message identifying the missing key and its purpose.
+    """
+    required: dict[str, str] = {
+        "GOOGLE_API_KEY": "Google Generative AI key required for LLM debate nodes",
+        "KAFKA_BOOTSTRAP_SERVERS": "Redpanda/Kafka broker address (e.g. 127.0.0.1:19092)",
+    }
+    missing = [
+        f"  {key} — {desc}"
+        for key, desc in required.items()
+        if not os.getenv(key)
+    ]
+    if missing:
+        raise RuntimeError(
+            "Missing required environment variables:\n"
+            + "\n".join(missing)
+            + "\n\nSet them in your shell or in a .env file at the project root."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 
 def main() -> None:
     """Configure environment and launch the orchestrator event loop."""
+    _validate_environment()
     settings = OrchestratorSettings()
     logger   = configure_logging(settings.log_level)
     runner   = DebateOrchestrator(settings=settings, logger=logger)

@@ -106,18 +106,44 @@ Your task is to evaluate the Biologist's recommendation through a financial lens
 _JUDGE_SYSTEM_PROMPT = """You are the **Executive Arbitrator (The Judge)** for OceanTrust AI.
 You must synthesize a final operational decision by evaluating the arguments submitted by the Biologist (focused on health/law) and the Commercial Trader (focused on profit).
 
-**Rules of Arbitration:**
-1. **Absolute Compliance:** If the Biologist cites a hard legal threshold (e.g., Norwegian law mandates treatment at 0.5 lice/fish), you CANNOT override this for financial gain. The law is absolute.
-2. **Hallucination Check:** Verify that the Biologist's legal claims actually exist in the provided `rag_context`. If they hallucinated a law, discard their argument.
-3. **Compromise:** If biology allows a 48-hour delay without mass mortality and the Trader proves prices will rebound, you may rule for HOLD. If the conflict is irreconcilable, rule HARVEST_PARTIAL to hedge risk.
+**=== LIFE-FIRST PROTOCOL (HIGHEST PRIORITY — CANNOT BE OVERRIDDEN) ===**
+If ANY of the following biological emergency conditions are present in the telemetry or the Biologist's argument:
+  - Dissolved oxygen < 4.0 mg/L
+  - Mortality risk > 80% (as assessed by the Biologist's stress index)
+  - Any condition the Biologist classifies as "mass mortality imminent"
 
-**Output Requirements:**
-You must return a structured JSON synthesis containing exactly these fields:
-- `reasoning`: A step-by-step breakdown weighing both sides (max 150 words).
-- `hallucination_detected`: boolean (true if either agent invented facts not in the context).
-- `recommended_action`: Exact string -> "HARVEST_NOW", "HARVEST_PARTIAL", "HOLD", or "TREAT".
-- `confidence_score`: Float between 0.0 and 1.0.
-- `cited_sources`: Array of any document IDs or data APIs definitively relied upon for this verdict.
+Then you MUST:
+  1. Issue `recommended_action: "HARVEST_NOW"` — no exceptions.
+  2. Set `confidence_score` to a minimum of 0.9.
+  3. Include the exact phrase **"BIOLOGICAL OVERRIDE"** in your `reasoning` field to signal
+     that animal welfare and legal compliance supersede financial considerations.
+  4. Ignore the Commercial agent's objections entirely for this ruling.
+
+**=== COMMERCIAL SILENCE RULE ===**
+If the Commercial Agent provides no market data, incomplete data, or states that data is
+unavailable, you MUST treat this as a **NEUTRAL** position (neither supporting nor opposing
+the Biologist). Absence of financial data is NEVER a valid reason to issue HOLD when a
+biological emergency exists.
+
+**=== STANDARD RULES OF ARBITRATION (apply when Life-First Protocol is NOT triggered) ===**
+1. **Absolute Legal Compliance**: If the Biologist cites a hard legal threshold under
+   Norwegian Akvakulturloven (e.g., lice > 0.5/fish mandates treatment), you CANNOT
+   override this for financial gain. The law is absolute.
+2. **Hallucination Check**: Verify that the Biologist's legal claims exist in the provided
+   `rag_context`. If a law was hallucinated, discard that specific argument (but do NOT
+   use hallucination as grounds to issue HOLD during a biological emergency).
+3. **Compromise**: If biology allows a 48-hour delay without mass mortality risk AND the
+   Trader proves prices will rebound with concrete data, you may rule HOLD.
+   If the conflict is irreconcilable, rule HARVEST_PARTIAL to hedge risk.
+
+**=== OUTPUT REQUIREMENTS ===**
+You MUST return a structured JSON object with EXACTLY these fields — no extras, no omissions:
+- `reasoning`: Step-by-step breakdown weighing both sides (max 200 words). If invoking the
+  Life-First Protocol, include "BIOLOGICAL OVERRIDE" and explain which threshold triggered it.
+- `hallucination_detected`: boolean — true if either agent invented facts not in context.
+- `recommended_action`: Exactly one of "HARVEST_NOW", "HARVEST_PARTIAL", "HOLD", "TREAT".
+- `confidence_score`: Float 0.0–1.0. Minimum 0.9 when Life-First Protocol is triggered.
+- `cited_sources`: Array of document IDs or API names definitively relied upon.
 
 After calling verify_regulatory_claim and emit_final_verdict, you are done."""
 
@@ -238,12 +264,98 @@ async def judge_node(state: DebateState) -> dict[str, Any]:
     """
     Judge Agent: synthesises the debate and emits the binding verdict.
     Must invoke verify_regulatory_claim before emitting emit_final_verdict.
+
+    Hard override (code-level, pre-LLM):
+        If dissolved oxygen < 4.0 mg/L the Judge immediately returns HARVEST_NOW
+        without calling the LLM.  This guarantees the override even when the model
+        fails to follow its system prompt.
     """
     revision  = state.get("revision_count", 0)
     bio_args  = state.get("biologist_arguments",  ["No argument."])
     comm_args = state.get("commercial_arguments", ["No argument."])
     log.info("judge_node_invoked", farm_id=state["farm_id"], revision=revision)
 
+    # ------------------------------------------------------------------
+    # HARD OVERRIDE — pure Python, zero LLM calls.
+    #
+    # Path verified against main.py build_initial_debate_state():
+    #   state["telemetry_snapshot"] = raw Kafka payload (full iot_sensor_event)
+    #   state["telemetry_snapshot"]["water_quality"]["dissolved_oxygen_mg_l"]
+    #
+    # Uses multiple fallback keys to survive any naming variation.
+    # ------------------------------------------------------------------
+    _O2_LETHAL_THRESHOLD: float = 4.0  # mg/L — immediate mass mortality risk
+
+    telemetry: dict = state.get("telemetry_snapshot") or {}
+    water: dict     = (
+        telemetry.get("water_quality")
+        or telemetry.get("waterQuality")
+        or {}
+    )
+
+    # Try primary key first, then camelCase and top-level fallbacks.
+    # next() short-circuits on the first non-None value found.
+    _O2_KEYS = [
+        ("water", "dissolved_oxygen_mg_l"),   # primary — matches simulate_alert.py
+        ("water", "dissolvedOxygenMgL"),       # camelCase fallback
+        ("telemetry", "oxygen"),               # flat fallback
+    ]
+    raw_o2 = next(
+        (
+            water.get(k) if src == "water" else telemetry.get(k)
+            for src, k in _O2_KEYS
+            if (water.get(k) if src == "water" else telemetry.get(k)) is not None
+        ),
+        None,
+    )
+
+    # Coerce to float — guard against str serialisation edge cases
+    try:
+        current_o2: float | None = float(raw_o2) if raw_o2 is not None else None
+    except (TypeError, ValueError):
+        current_o2 = None
+
+    log.debug(
+        "judge_o2_extraction",
+        telemetry_keys=list(telemetry.keys()),
+        water_quality_keys=list(water.keys()),
+        raw_o2=raw_o2,
+        current_o2=current_o2,
+    )
+
+    if current_o2 is not None and current_o2 < _O2_LETHAL_THRESHOLD:
+        reason = (
+            f"EMERGENCY BIOLOGICAL OVERRIDE: Dissolved oxygen is at lethal levels "
+            f"({current_o2:.2f} mg/L). Akvakulturloven §12 mandate. "
+            "Immediate harvest required regardless of commercial data. "
+            "Life-First Protocol supersedes all financial considerations. "
+            "Commercial agent input disregarded."
+        )
+        log.warning(
+            "judge_hard_override_triggered",
+            farm_id=state["farm_id"],
+            dissolved_oxygen_mg_l=current_o2,
+            threshold=_O2_LETHAL_THRESHOLD,
+            action="HARVEST_NOW",
+        )
+        return {
+            "judge_verdict":          reason,
+            "recommended_action":     "HARVEST_NOW",
+            "confidence_score":       1.0,
+            "hallucination_detected": False,
+            "cited_sources":          ["HARD_OVERRIDE", "Akvakulturloven_§12"],
+            "revision_count":         revision,
+        }
+
+    log.debug(
+        "judge_o2_nominal",
+        current_o2=current_o2,
+        threshold=_O2_LETHAL_THRESHOLD,
+    )
+
+    # ------------------------------------------------------------------
+    # Standard LLM-based arbitration (O2 above lethal threshold)
+    # ------------------------------------------------------------------
     llm = _make_llm(temperature=0.1).bind_tools(
         [verify_regulatory_claim, emit_final_verdict, query_vector_knowledge_base]
     )

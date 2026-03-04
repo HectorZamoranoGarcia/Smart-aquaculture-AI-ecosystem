@@ -1,145 +1,234 @@
-# OceanTrust AI
+# OceanGuard: Multi-Agent AI for Autonomous Aquaculture Decision-Making
 
-Project focused on real-time aquaculture risk management using a distributed **multi-agent LLM debate** orchestrated with **LangGraph**, powered by event-streaming with **Redpanda** and retrieval-augmented generation with **Qdrant** — entirely migrated to **Google Gemini** for deterministic reasoning and embedding extraction.
+> **Autonomous orchestration system** combining *event-driven architecture*, *RAG*, and *multi-agent debate* to issue real-time regulatory verdicts for Norwegian salmon farms.
 
-![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)
-![Redpanda](https://img.shields.io/badge/Redpanda-v24.3-E63946?logo=apachekafka&logoColor=white)
-![Qdrant](https://img.shields.io/badge/Qdrant-latest-orange)
-![LangGraph](https://img.shields.io/badge/LangGraph-0.2-4CAF50)
-![Gemini](https://img.shields.io/badge/Gemini-2.5_Flash_Lite-1A73E8?logo=google&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-lightgrey)
+---
 
-## Project Overview
+## 📐 Architecture Overview
 
-OceanTrust AI is a production-grade distributed platform that automates critical operational decisions in industrial salmon farming. The system resolves the core commercial dilemma operators face daily: when an IoT sensor detects a biological emergency (e.g., low dissolved oxygen, sea lice outbreak), does regulatory compliance or market timing take priority?
+The system is built on **strict layer separation** — the AI core never couples with the monitoring UI:
 
-The architecture implements a **deterministic, auditable multi-agent workflow** from first principles. It consumes telemetry via Kafka topics, maps payload data against legal texts using a vector database, and delegates conflict resolution to a LangGraph network where three specialized agents (Biologist, Commercial Trader, Judge) debate over objective data before issuing a structured verdict. All dependencies on OpenAI have been replaced by Google's **Gemini 2.5 Flash Lite** and `models/gemini-embedding-001`, resulting in faster inference, reduced latency, and native JSON output compliance.
-
-## Architecture & Tech Stack
-
-### 1. Event-Driven Infrastructure (Redpanda)
-The messaging backbone leverages Redpanda deployed in a single-node configuration with a **Dual Listener topology**:
-- Internal traffic (Docker subnet containers, e.g., vector worker, RAG orchestrator) routes via `internal://redpanda:9092`.
-- External traffic (host scripts, e.g., `simulate_alert.py`) routes via `external://localhost:19092`.
-- The telemetry producer and market feed generator utilize native `gzip` compression via `AIOKafkaProducer`, abandoning heavy C++ dependencies like `snappy`.
-
-### 2. Vector Database (Qdrant)
-The persistence layer for legal documentation is powered by Qdrant (`latest` version), fully updated to support the **Universal Query API** (`query_points`).
-- Collections (`fishing_regulations`, `market_vectors`) are provisioned with **768 dimensions** and `Cosine` distance metrics to perfectly align with Gemini's embedding output size.
-
-### 3. AI Cognitive Engine (Google Gemini)
-The cognitive layer is powered exclusively by the Google AI stack:
-- **LLM Engine:** `gemini-2.5-flash-lite` serves as the engine for all LangGraph nodes. Network resilience is guaranteed through an Exponential Backoff strategy (`max_retries=5`) utilizing the `tenacity` library to mitigate `429 RESOURCE_EXHAUSTED` errors during parallel batching.
-- **Embeddings:** `models/gemini-embedding-001` generates the 768-dim vectors via `GoogleGenerativeAIEmbeddings` for the semantic ingestion pipeline.
-
-### 4. Multi-Agent Workflow (LangGraph)
-The pipeline subscribes to `ocean.telemetry.v1`, triggering the RAG flow. Three distinct roles evaluate the payload:
-- **Biologist Agent:** Queries the Qdrant knowledge base, prioritizing biological welfare and statutory limits.
-- **Commercial Agent:** Prioritizes harvest opportunity cost and market timing.
-- **Judge Agent:** Arbitrates the debate, resolves hallucinations, and outputs a final decision.
-
-### Repository Structure
-
-```text
-oceantrust-ai/
-├── bin/
-│   ├── docker/
-│   │   └── docker-compose.yml         # Redpanda Dual Listener + Qdrant latest
-│   └── scripts/
-│       ├── provision_infrastructure.sh
-│       └── provision_qdrant.sh        # Provisions 768-dim collections
-├── config/
-│   └── farms_config.json              # 5 simulated farms (Norway, Scotland, Chile)
-├── data/
-│   └── knowledge/
-│       └── norway_aquaculture_law.md  # Akvakulturloven
-├── docs/
-│   ├── architecture.md                # System design and Gemini integration specs
-│   ├── agents-orchestration.md        # LangGraph StateGraph design
-│   ├── vector-worker-spec.md          # Consumer loop logic
-│   └── ...
-├── logs/
-│   └── audit/
-│       └── debates/                   # JSON traceability sink (Mandatory regulatory compliance)
-├── schemas/
-│   └── iot_sensor_event.schema.json
+```
+OceanGuard/
 ├── src/
-│   ├── agents/
-│   │   ├── main.py                    # LangGraph orchestrator consumer
-│   │   ├── state.py                   # TypedDict state registry
-│   │   └── tools.py
-│   ├── ingestion/
-│   │   ├── ocean_producer.py          # AIOKafkaProducer with gzip
-│   │   └── knowledge_loader.py        # Gemini 768-dim embedding script
-│   └── workers/
-│       └── vector_worker.py
-├── .env.example
-├── Makefile
-└── README.md
+│   ├── agents/         # AI Core: LangGraph debate graph, state machine, RAG tools
+│   ├── ingestion/      # Knowledge loader (Qdrant) + telemetry producer (Redpanda)
+│   ├── processing/     # Vector worker — async embedding pipeline
+│   └── ui/             # Control Tower (Streamlit) — read-only, zero src/agents imports
+├── bin/
+│   ├── docker/         # docker-compose.yml: Redpanda, Qdrant, Ollama, Redpanda Console
+│   └── scripts/        # simulate_alert.py (smoke test), run_ui.sh / run_ui.bat
+├── docs/               # ADRs, architecture diagrams, agent specifications
+├── data/knowledge/     # Regulatory documents indexed in Qdrant
+└── logs/audit/debates/ # Immutable JSON debate traces (one file per event)
 ```
 
-## Prerequisites & Environment Variables
+**Data flow:**
 
-You must install Docker Desktop and Python 3.12+.
-Variables required in your `.env` file at the repository root:
-
-```dotenv
-# Required for Gemini 2.5 Flash Lite and Embeddings
-GOOGLE_API_KEY=AIzaSyYourKeyHere...
-
-# Dual Listener Endpoints (Internal for Docker, External for Host scripts)
-KAFKA_BOOTSTRAP_SERVERS=localhost:19092
-KAFKA_INTERNAL_SERVERS=redpanda:9092
-
-# Qdrant Database
-QDRANT_URL=http://localhost:6333
+```
+IoT Sensor → Redpanda (ocean.telemetry.v1)
+                │
+                ├─► Vector Worker  →  Qdrant (embeddings)
+                └─► Agent Orchestrator (src/agents/main.py)
+                        │
+                        └─► LangGraph Debate Graph
+                                ├── Biologist Node
+                                ├── Commercial Node
+                                └── Judge Node → Audit JSON
+                                                     │
+                                             Streamlit UI (read-only)
 ```
 
-## Local Deployment
+UI ↔ AI decoupling is achieved via **Redpanda as a message bus** and **direct JSON audit file reads** — the UI never imports any module from `src/agents/`.
 
-Launch the entire stack using the `docker-compose.yml` configuration. This brings up Redpanda (with the dual listener profile) and Qdrant.
+---
+
+## 🛡️ Biological Override Protocol (Life-First Protocol)
+
+The system implements a **deterministic code-level guard** inside `judge_node` that executes **before any LLM call**:
+
+```python
+# src/agents/graph.py — judge_node()
+_O2_LETHAL_THRESHOLD = 4.0  # mg/L
+
+if current_o2 is not None and current_o2 < _O2_LETHAL_THRESHOLD:
+    return {
+        "recommended_action": "HARVEST_NOW",
+        "confidence_score": 1.0,
+        "reasoning": "EMERGENCY BIOLOGICAL OVERRIDE: ...",
+        "cited_sources": ["HARD_OVERRIDE", "Akvakulturloven_§12"],
+    }
+```
+
+**Why deterministic and not prompt-based:**
+- LLMs cannot guarantee 100% instruction compliance under all context conditions
+- O₂ < 4.0 mg/L implies mass mortality risk within minutes
+- Norwegian Aquaculture Act (*Akvakulturloven* §12) establishes absolute legal thresholds
+
+The override **returns immediately**, skipping the Gemini API call entirely — zero latency, zero cost in the worst biological scenario.
+
+---
+
+## 🥞 Tech Stack
+
+| Layer | Technology | Role |
+|---|---|---|
+| **Agent Orchestration** | [LangGraph](https://langchain-ai.github.io/langgraph/) | Multi-agent state machine with revision rounds |
+| **LLM** | Google Gemini 2.5 Flash Lite | Biologist, Commercial, Judge agents |
+| **Embeddings** | Google `gemini-embedding-001` | Regulatory document vectorisation (768 dims) |
+| **Vector DB** | [Qdrant](https://qdrant.tech/) v1.9+ | Semantic search over regulatory knowledge base |
+| **Message Broker** | [Redpanda](https://redpanda.com/) | Kafka-compatible telemetry bus |
+| **UI** | [Streamlit](https://streamlit.io/) | Control Tower — debate history and RAG search |
+| **Containers** | Docker Compose | Full dev environment orchestration |
+| **Language** | Python 3.11+ | Async/await via `asyncio` + `aiokafka` |
+
+---
+
+## 🚀 Setup & Execution
+
+### Prerequisites
+- Docker Desktop (WSL2 on Windows) or Docker Engine on Linux/macOS
+- Python 3.11+
+- An active `GOOGLE_API_KEY` ([Google AI Studio](https://aistudio.google.com/))
+
+### 1. Clone and set up the environment
 
 ```bash
-cd bin/docker
-docker compose up -d
+git clone https://github.com/HectorZamoranoGarcia/Smart-aquaculture-AI-ecosystem.git
+cd Smart-aquaculture-AI-ecosystem
+
+# Create and activate virtual environment
+python -m venv .venv
+source .venv/Scripts/activate    # Windows (Git Bash)
+# source .venv/bin/activate      # Linux / macOS
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-Verify the health of the containers, then provision the schemas and collections:
+### 2. Configure environment variables
 
 ```bash
-# From the project root
-make provision
+export GOOGLE_API_KEY="your-key-here"
+export KAFKA_BOOTSTRAP_SERVERS="127.0.0.1:19092"   # IP avoids IPv6 issues on Windows
+export PYTHONPATH=$(pwd)
 ```
 
-*Note: The script `provision_qdrant.sh` creates the `fishing_regulations` and `market_vectors` collections natively set to 768 dimensions.*
+### 3. Start the infrastructure (Redpanda + Qdrant)
 
-## Running the Pipeline
-
-**1. Load the Knowledge Base**
-Embed the Norwegian aquaculture regulations using `models/gemini-embedding-001` and upsert into Qdrant:
 ```bash
-python -m src.ingestion.knowledge_loader
+docker compose -f bin/docker/docker-compose.yml up -d redpanda qdrant
+
+# Verify Redpanda is healthy:
+docker compose -f bin/docker/docker-compose.yml ps
 ```
 
-**2. Start the Telemetry Simulator**
-Generate simulated IoT payloads compressed via `gzip` to the external Redpanda listener (`localhost:19092`):
+### 4. Index the regulatory knowledge base
+
 ```bash
-python -m src.ingestion.ocean_producer --mode telemetry
+# Indexes docs in data/knowledge/ → fishing_regulations collection in Qdrant
+python -m src.ingestion.knowledge_loader --data-dir data/knowledge
 ```
 
-**3. Launch the LangGraph Orchestrator**
-Start the main consumer that orchestrates the `gemini-2.5-flash-lite` multi-agent debate:
+### 5. Start the agent orchestrator (Backend)
+
 ```bash
+# Terminal 1 — Kafka consumer + LangGraph debate engine
 python -m src.agents.main
 ```
 
-## Audit & Observability
+### 6. Send a test alert
 
-Mandatory traceability is a core requirement for aquaculture regulatory compliance.
-The system enforces strict audit trails: every decision resolved by the LangGraph workflow is persisted locally as a structured document before being acknowledged to the Kafka broker.
-
-Navigate to the audit directory to inspect the generated trails:
 ```bash
-cat logs/audit/debates/<debate_id>.json
+# Terminal 2 — Smoke test: critical O₂ + lice breach
+python bin/scripts/simulate_alert.py \
+    --farm-id "NORD-02" \
+    --oxygen 4.1 \
+    --lice 0.85
+
+# Deterministic override (O₂ < 4.0 → HARVEST_NOW, no LLM call):
+python bin/scripts/simulate_alert.py --farm-id "NORD-02" --oxygen 0.0 --lice 2.0
 ```
-These JSON files contain the full array of trigger alerts, the query history mapped to the Qdrant knowledge base, the respective arguments formulated by the Biologist and Commercial agents, and the final deterministic verdict issued by the Judge — alongside its calculated confidence score.
+
+### 7. Launch the Control Tower UI
+
+```bash
+# Windows (CMD / PowerShell)
+bin\scripts\run_ui.bat
+
+# Git Bash / WSL / Linux
+./bin/scripts/run_ui.sh
+
+# Available at http://localhost:8501
+```
+
+---
+
+## 🤖 Decision Flow: The Three Agents
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  JUDGE NODE (Pre-LLM Check)                     │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ O₂ < 4.0 mg/L? → HARVEST_NOW (deterministic, no LLM)   │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                        ↓ (if O₂ OK)                            │
+├─────────────────┬──────────────────┬───────────────────────────┤
+│  🔬 BIOLOGIST   │  📈 COMMERCIAL   │  ⚖️ JUDGE                 │
+│                 │                  │                           │
+│ Evaluates:      │ Evaluates:       │ Final arbitration:        │
+│ • Water params  │ • Current market │ • Verifies legal          │
+│ • Mortality     │   price          │   compliance (RAG)        │
+│   risk          │ • ROI projection │ • Detects hallucinations  │
+│ • Akvakulturloven│ • Treatment cost│ • Issues verdict:         │
+│   §12 compliance│ • Price trend    │   HARVEST_NOW /           │
+│                 │                  │   HARVEST_PARTIAL /       │
+│                 │                  │   HOLD / TREAT            │
+└─────────────────┴──────────────────┴───────────────────────────┘
+```
+
+**Judge's golden rule:** Biological safety and *Akvakulturloven* legal compliance always override financial uncertainty. Missing market data is treated as a **Neutral** position — never as justification for HOLD during a biological emergency.
+
+---
+
+## 📋 Audit & Compliance
+
+Every debate generates an immutable JSON file at `logs/audit/debates/<YYYY-MM-DD>/<debate_id>.json`:
+
+```json
+{
+  "audit_version": "1.0",
+  "debate_id": "ed0ce3a5-...",
+  "farm_id": "NORD-02",
+  "recommended_action": "HARVEST_NOW",
+  "confidence_score": 1.0,
+  "hallucination_detected": false,
+  "judge_verdict": "EMERGENCY BIOLOGICAL OVERRIDE: ...",
+  "cited_sources": ["HARD_OVERRIDE", "Akvakulturloven_§12"],
+  "biologist_arguments": ["..."],
+  "commercial_arguments": ["..."],
+  "revision_count": 0
+}
+```
+
+These records enable:
+- **Regulatory traceability**: Every autonomous decision is documented with its legal basis
+- **Hallucination auditing**: `hallucination_detected: true` escalates to human operators
+- **Replay & debugging**: The complete debate state is fully reproducible
+- **Compliance retention**: Configurable via `AUDIT_LOG_DIR` environment variable
+
+---
+
+## ⚡ Key Architectural Decisions
+
+| Decision | Alternative considered | Reason |
+|---|---|---|
+| Deterministic pre-LLM override | Prompt engineering alone | LLMs cannot guarantee 100% instructional compliance |
+| Redpanda as message bus | Direct HTTP polling | Full UI ↔ Backend decoupling + message replay |
+| Qdrant for RAG | ChromaDB / FAISS | Native async client, gRPC support, metadata filters |
+| `gemini-2.5-flash-lite` | GPT-4o-mini | Free Tier compatible, `max_retries=5` for HTTP 429 |
+| Manual Kafka offset commit | Auto-commit | Offset committed only AFTER debate completes — zero event loss |
+
+---
+
+*OceanGuard AI — Héctor Zamorano García — MIT License 2026*
