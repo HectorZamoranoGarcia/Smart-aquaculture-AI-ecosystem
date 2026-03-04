@@ -9,6 +9,7 @@ Version: 3.0.0 | Status: Production-Ready | License: MIT
 ![Google Gemini 2.0](https://img.shields.io/badge/Google%20Gemini-v2.0-8E75C2?style=for-the-badge&logo=googlegemini&logoColor=white)
 ![Redpanda](https://img.shields.io/badge/Redpanda-latest-FF0000?style=for-the-badge&logo=redpanda&logoColor=white)
 ![Qdrant](https://img.shields.io/badge/Qdrant-latest-D13A4F?style=for-the-badge&logo=qdrant&logoColor=white)
+![Antigravity](https://img.shields.io/badge/Python-Antigravity-ff69b4?style=for-the-badge&logo=python&logoColor=white)
 
 ## Overview
 
