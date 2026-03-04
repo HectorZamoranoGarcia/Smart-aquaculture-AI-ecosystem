@@ -4,7 +4,11 @@ Multi-Agent Intelligence System for Autonomous Aquaculture Decision-Making
 
 Version: 3.0.0 | Status: Production-Ready | License: MIT
 
----
+![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
+![LangGraph](https://img.shields.io/badge/LangGraph-000000?style=for-the-badge&logo=langchain&logoColor=white)
+![Google Gemini](https://img.shields.io/badge/Google%20Gemini-8E75C2?style=for-the-badge&logo=googlegemini&logoColor=white)
+![Redpanda](https://img.shields.io/badge/Redpanda-FF0000?style=for-the-badge&logo=redpanda&logoColor=white)
+![Qdrant](https://img.shields.io/badge/Qdrant-D13A4F?style=for-the-badge&logo=qdrant&logoColor=white)
 
 ## Overview
 
