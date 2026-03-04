@@ -38,11 +38,11 @@ help:
 	@echo "    provision-kafka  Create Redpanda topics only"
 	@echo "    provision-qdrant Create Qdrant collections + payload indices"
 	@echo ""
-	@echo "  Knowledge Ingestion:
-    load-knowledge   Embed all Markdown docs from data/knowledge/ into Qdrant
-    dry-run-loader   Validate chunking without calling OpenAI or Qdrant
-
-  Observability:"
+	@echo "  Knowledge Ingestion:")
+	@echo "    load-knowledge   Embed Markdown docs from data/knowledge/ into Qdrant"
+	@echo "    dry-run-loader   Validate chunking without API calls"
+	@echo ""
+	@echo "  Observability:"
 	@echo "    status           Print service health and endpoint URLs"
 	@echo "    logs             Tail Redpanda broker logs"
 	@echo "    logs-all         Tail all service logs"
@@ -171,7 +171,7 @@ clean:
 dashboard:
 	@echo "[make] Starting OceanTrust AI Control Tower..."
 	@echo "[make] Dashboard available at: http://localhost:8501"
-	streamlit run src/visualization/dashboard.py \
+	streamlit run src/ui/dashboard.py \
 		--server.port 8501 \
 		--server.headless true \
 		--browser.gatherUsageStats false
