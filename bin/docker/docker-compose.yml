@@ -42,6 +42,7 @@ services:
   #   market.prices.v1     → species:product_form  (8 partitions, compact)
   # Ref: docs/kafka-topics.md
   # ---------------------------------------------------------------------------
+
   redpanda:
     image: redpandadata/redpanda:v24.3.1
     container_name: redpanda
@@ -50,6 +51,7 @@ services:
       - oceantrust-network
     # External port 19092 is used by host-side producers/consumers (Python scripts).
     # Internal port 9092 is used by other containers (console, vector worker, agents).
+
     ports:
       - "9092:9092" # Kafka API — container-to-container (console, workers)
       - "19092:19092" # Kafka API — host-to-container (Python producers/consumers)
@@ -68,6 +70,7 @@ services:
       # --reserve-memory 0M : release the OS memory reserve (not needed in dev)
       # --node-id 0      : explicit node ID so Raft quorum self-elects immediately
       # --check=false    : skip hardware compatibility checks (not relevant in Docker)
+
       - --overprovisioned
       - --smp=1
       - --memory=1G
@@ -77,9 +80,11 @@ services:
       # ── Dual listener topology (fixes controller-broker quorum on Docker bridge) ──
       # internal://  → used by containers on the oceantrust-network (redpanda hostname)
       # external://  → used by host-side Python scripts (localhost:19092)
+
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
       # ── Schema Registry & Pandaproxy ──────────────────────────────────────
+
       - --schema-registry-addr=http://0.0.0.0:8081
       - --pandaproxy-addr=http://0.0.0.0:8082
       - --advertise-pandaproxy-addr=http://localhost:8082
@@ -95,6 +100,7 @@ services:
   # consumer group lag monitoring.
   # UI: http://localhost:8080
   # ---------------------------------------------------------------------------
+
   console:
     image: redpandadata/console:v2.7.2
     container_name: redpanda-console
@@ -129,6 +135,7 @@ services:
   # gRPC API: localhost:6334
   # Ref: docs/knowledge-ingestion.md, docs/vector-worker-spec.md
   # ---------------------------------------------------------------------------
+
   qdrant:
     image: qdrant/qdrant:latest
     container_name: qdrant
@@ -142,9 +149,11 @@ services:
       - qdrant-data:/qdrant/storage
     environment:
       # Enable Qdrant's built-in Web UI (accessible at http://localhost:6333/dashboard)
+
       QDRANT__SERVICE__ENABLE_STATIC_CONTENT: "true"
     healthcheck:
       # Qdrant exposes /healthz on the REST port when the node is ready.
+
       test: [ "CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1" ]
       interval: 10s
       timeout: 5s
@@ -164,6 +173,7 @@ services:
   # REST API: http://localhost:11434
   # Ref: docs/adr/ADR-001-redpanda-vs-kafka.md
   # ---------------------------------------------------------------------------
+
   ollama:
     image: ollama/ollama:0.3.12
     container_name: ollama
@@ -176,6 +186,7 @@ services:
       - ollama-data:/root/.ollama
     # Pull the required embedding model on first start.
     # The shell loop ensures Ollama's server is ready before the pull is attempted.
+
     entrypoint: [ "/bin/sh", "-c" ]
     command:
       - |
@@ -191,6 +202,7 @@ services:
         wait $$SERVER_PID
     healthcheck:
       # Ollama is ready when its /api/tags endpoint returns a 200 response.
+
       test: [ "CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1" ]
       interval: 15s
       timeout: 10s

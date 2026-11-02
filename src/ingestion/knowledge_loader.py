@@ -44,12 +44,14 @@ from qdrant_client.models import PointStruct
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+
 structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.INFO))
 log: structlog.BoundLogger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
+
 QDRANT_URL: str    = os.getenv("QDRANT_URL", "http://localhost:6333")
 EMBEDDING_MODEL: str = "models/gemini-embedding-001"  # Google Generative AI — 768-dim
 EMBEDDING_DIM: int   = 768                             # gemini-embedding-001 default output dimension
@@ -65,6 +67,7 @@ EMBED_BATCH_SIZE: int  = 50  # Texts per Google Generative AI embeddings call
 # Collection routing keywords
 # Each tuple: (collection_name, list_of_filename_keywords)
 # ---------------------------------------------------------------------------
+
 COLLECTION_ROUTING: list[tuple[str, list[str]]] = [
     ("fishing_regulations", ["law", "regulation", "quota", "legislation", "directive"]),
     ("biological_manuals",  ["manual", "protocol", "disease", "biology", "health"]),
@@ -314,6 +317,7 @@ async def ingest_file(
     points: list[PointStruct] = []
 
     # Embed in batches of EMBED_BATCH_SIZE to respect API rate limits
+
     for batch_start in range(0, chunk_total, EMBED_BATCH_SIZE):
         batch_texts = chunks[batch_start : batch_start + EMBED_BATCH_SIZE]
         embeddings  = await embed_texts(embedder, batch_texts)
@@ -349,6 +353,7 @@ async def ingest_file(
             ))
 
     # Upsert in batches of UPSERT_BATCH_SIZE
+
     upserted = 0
     for batch_start in range(0, len(points), UPSERT_BATCH_SIZE):
         batch = points[batch_start : batch_start + UPSERT_BATCH_SIZE]

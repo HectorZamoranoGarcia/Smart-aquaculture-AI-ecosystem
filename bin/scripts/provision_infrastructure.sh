@@ -1,66 +1,48 @@
 #!/usr/bin/env bash
-# =============================================================================
-# provision_infrastructure.sh — OceanTrust.ai
-# =============================================================================
-# Purpose  : Wait for the Redpanda cluster to be ready, then create all
-#            application topics following the Architect's domain schemas.
-#
-# Usage    : bash bin/scripts/provision_infrastructure.sh
-#            RPK_BROKERS=localhost:9092 bash bin/scripts/provision_infrastructure.sh
-#
-# Requires : rpk CLI  — https://docs.redpanda.com/current/get-started/rpk/
-#            OR Docker (will use rpk from the redpanda container as fallback)
-# =============================================================================
+# Provision local Redpanda topics
+# Run: bash bin/scripts/provision_infrastructure.sh
+# Requires: rpk or Docker
 
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Configuration — override via environment variables
 # ---------------------------------------------------------------------------
+
 readonly BROKER_ADDRESS="${RPK_BROKERS:-localhost:9092}"
 readonly REDPANDA_CONTAINER="${REDPANDA_CONTAINER:-redpanda}"
 readonly MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-120}"
 readonly POLL_INTERVAL_SECONDS=5
 
 # ---------------------------------------------------------------------------
-# Topic definitions — OceanTrust.ai domain schemas (Architect v1.0.0)
+# Topic definitions
 #
-# FORMAT per entry: "topic-name:partitions:replication-factor:retention-ms"
+# Format: name:partitions:replicas:retention-ms
 #
-# Partition key strategy (enforced at producer level, not here):
-#   salmon.farm.sensor.telemetry  → farm_id  (e.g. "NO-FARM-0047")
-#   market.oslo.fish.prices       → species + ":" + product_form  (composite)
+# Producers set the partition keys
 #
-# Retention:
-#   7 days  = 604800000 ms  (regulatory minimum for market data)
-#   30 days = 2592000000 ms (IoT telemetry for trend analysis)
-#   infinite = -1
+# Retention is measured in milliseconds
 # ---------------------------------------------------------------------------
+
 declare -a TOPICS=(
-  # ── IoT Sensor Telemetry — Salmon Farm ────────────────────────────────────
-  # High-volume readings from physical sensor units (water quality, biological,
-  # environment). Schema: iot_sensor_event.schema.json  event_type: SENSOR_TELEMETRY
-  # 12 partitions: high write throughput from many concurrent sensor devices.
+  # Sample sensor events
+
   "salmon.farm.sensor.telemetry:12:1:2592000000"
 
-  # ── Market Data — Oslo Fish Prices ────────────────────────────────────────
-  # Price ticks from Fish Pool Oslo, NASDAQ Commodities, and affiliated feeds.
-  # Schema: market_data_event.schema.json  event_type: MARKET_PRICE_TICK
-  # 8 partitions: moderate throughput, keyed by species+product_form composite.
+  # Market price records
+
   "market.oslo.fish.prices:8:1:604800000"
 
-  # ── Dead-Letter Queue — All Domains ───────────────────────────────────────
-  # Messages that failed schema validation or producer-level processing.
-  # Consumed by the alert service and manual review workflows.
+  # Failed messages
+
   "dlq.events.failed:4:1:604800000"
 
-  # ── LLM Orchestration — Commands ──────────────────────────────────────────
-  # Dispatch requests to LLM workers: anomaly analysis, report generation,
-  # price forecasting, and regulatory compliance checks.
+  # Agent requests
+
   "llm.commands.dispatch:6:1:604800000"
 
-  # ── LLM Orchestration — Responses ─────────────────────────────────────────
-  # Processed results returned by LLM workers back into the pipeline.
+  # Agent responses
+
   "llm.responses.processed:6:1:604800000"
 )
 
@@ -85,8 +67,9 @@ log_error() {
 }
 
 # ---------------------------------------------------------------------------
-# Resolve the rpk command: prefer local binary, fall back to Docker exec.
+# Find rpk locally or in Docker
 # ---------------------------------------------------------------------------
+
 resolve_rpk_command() {
   if command -v rpk &>/dev/null; then
     log_info "Using local rpk binary: $(command -v rpk)"
@@ -102,9 +85,9 @@ resolve_rpk_command() {
 }
 
 # ---------------------------------------------------------------------------
-# Wait for the Redpanda cluster to accept connections.
-# Polls the Kafka API until successful or MAX_WAIT_SECONDS is reached.
+# Wait for Redpanda
 # ---------------------------------------------------------------------------
+
 wait_for_cluster() {
   log_info "Waiting for Redpanda cluster at ${BROKER_ADDRESS} (timeout: ${MAX_WAIT_SECONDS}s)..."
 
@@ -124,22 +107,17 @@ wait_for_cluster() {
 }
 
 # ---------------------------------------------------------------------------
-# Create a single topic.
-# Skips creation if the topic already exists (idempotent operation).
-#
-# Arguments:
-#   $1  topic_name       — Kafka topic name
-#   $2  partitions       — Number of partitions
-#   $3  replication      — Replication factor
-#   $4  retention_ms     — Retention in milliseconds (-1 for infinite)
+# Create one topic if needed
 # ---------------------------------------------------------------------------
+
 create_topic() {
   local topic_name="$1"
   local partitions="$2"
   local replication="$3"
   local retention_ms="$4"
 
-  # Check if topic already exists to make the script idempotent.
+  # Skip topics that already exist
+
   if ${RPK_CMD} topic describe "${topic_name}" &>/dev/null; then
     log_warn "Topic '${topic_name}' already exists — skipping creation."
     return 0
@@ -157,16 +135,17 @@ create_topic() {
 }
 
 # ---------------------------------------------------------------------------
-# Parse the TOPICS array and create each topic.
-# Expected entry format: "name:partitions:replication:retention_ms"
+# Create configured topics
 # ---------------------------------------------------------------------------
+
 provision_topics() {
   log_info "Provisioning ${#TOPICS[@]} topic(s)..."
 
   local failed=0
 
   for topic_spec in "${TOPICS[@]}"; do
-    # Split the colon-delimited spec into individual fields.
+    # Split the topic settings
+
     IFS=':' read -r topic_name partitions replication retention_ms <<< "${topic_spec}"
 
     if [[ -z "${topic_name}" || -z "${partitions}" || -z "${replication}" || -z "${retention_ms}" ]]; then
@@ -190,8 +169,9 @@ provision_topics() {
 }
 
 # ---------------------------------------------------------------------------
-# Print a summary of all topics in the cluster after provisioning.
+# List available topics
 # ---------------------------------------------------------------------------
+
 print_topic_summary() {
   log_info "Current topic list in the cluster:"
   ${RPK_CMD} topic list
@@ -200,6 +180,7 @@ print_topic_summary() {
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 main() {
   log_info "=== Redpanda Infrastructure Provisioning ==="
   log_info "Broker : ${BROKER_ADDRESS}"

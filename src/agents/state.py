@@ -34,12 +34,14 @@ class DebateState(TypedDict):
     """
 
     # ── Orchestration metadata ─────────────────────────────────────────────
+
     debate_id: str            # UUIDv4 — audit trail identifier
     farm_id: str              # e.g. "NO-FARM-0047"
     trigger_alerts: list[dict[str, Any]]  # Raw alert dicts from ocean.alerts.v1
     revision_count: int       # Incremented on each Judge → Biologist revision loop
 
     # ── Raw context (assembled before LLM nodes run) ──────────────────────
+
     telemetry_snapshot: dict[str, Any]   # Latest sensor readings for this farm
     market_snapshot: dict[str, Any]      # Latest price tick from market.prices.v1
     rag_context: str          # Pre-fetched regulatory text from Qdrant
@@ -48,10 +50,12 @@ class DebateState(TypedDict):
     # ── Agent outputs (append-only — Annotated preserves history) ─────────
     # LangGraph merges these using operator.add (list concatenation)
     # so each revision round can be replayed for audit.
+
     biologist_arguments: Annotated[list[str], operator.add]
     commercial_arguments: Annotated[list[str], operator.add]
 
     # ── Final verdict (populated by the Judge before emitting) ────────────
+
     judge_verdict: Optional[str]             # Full reasoning narrative
     recommended_action: Optional[str]        # HARVEST_NOW | HARVEST_PARTIAL | HOLD | TREAT
     confidence_score: Optional[float]        # 0.0 – 1.0

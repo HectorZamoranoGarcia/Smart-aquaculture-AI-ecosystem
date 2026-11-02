@@ -115,10 +115,12 @@ async def query_vector_knowledge_base(
     Embedding provider: Google Generative AI (models/gemini-embedding-001, 768-dim).
     """
     # Run synchronous Google embedding in a thread to avoid blocking the event loop
+
     query_vector: list[float] = await asyncio.to_thread(_embed_query, query)
 
     client = _qdrant_client()
     # query_points() replaces the deprecated .search() in qdrant-client >= 1.7.0
+
     result = await client.query_points(
         collection_name=collection,
         query=query_vector,
@@ -230,11 +232,13 @@ async def verify_regulatory_claim(legal_text_snippet: str) -> bool:
     Embedding provider: Google Generative AI (models/gemini-embedding-001, 768-dim).
     """
     # Run synchronous Google embedding in a thread to avoid blocking the event loop
+
     query_vector: list[float] = await asyncio.to_thread(_embed_query, legal_text_snippet)
 
     client = _qdrant_client()
     # query_points() replaces the deprecated .search() in qdrant-client >= 1.7.0
     # score_threshold filters out low-confidence matches server-side.
+
     result = await client.query_points(
         collection_name="fishing_regulations",
         query=query_vector,

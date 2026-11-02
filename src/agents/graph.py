@@ -284,6 +284,7 @@ async def judge_node(state: DebateState) -> dict[str, Any]:
     #
     # Uses multiple fallback keys to survive any naming variation.
     # ------------------------------------------------------------------
+
     _O2_LETHAL_THRESHOLD: float = 4.0  # mg/L — immediate mass mortality risk
 
     telemetry: dict = state.get("telemetry_snapshot") or {}
@@ -295,6 +296,7 @@ async def judge_node(state: DebateState) -> dict[str, Any]:
 
     # Try primary key first, then camelCase and top-level fallbacks.
     # next() short-circuits on the first non-None value found.
+
     _O2_KEYS = [
         ("water", "dissolved_oxygen_mg_l"),   # primary — matches simulate_alert.py
         ("water", "dissolvedOxygenMgL"),       # camelCase fallback
@@ -310,6 +312,7 @@ async def judge_node(state: DebateState) -> dict[str, Any]:
     )
 
     # Coerce to float — guard against str serialisation edge cases
+
     try:
         current_o2: float | None = float(raw_o2) if raw_o2 is not None else None
     except (TypeError, ValueError):
@@ -356,6 +359,7 @@ async def judge_node(state: DebateState) -> dict[str, Any]:
     # ------------------------------------------------------------------
     # Standard LLM-based arbitration (O2 above lethal threshold)
     # ------------------------------------------------------------------
+
     llm = _make_llm(temperature=0.1).bind_tools(
         [verify_regulatory_claim, emit_final_verdict, query_vector_knowledge_base]
     )
@@ -452,4 +456,5 @@ def build_debate_graph() -> StateGraph:
 
 
 # Compiled singleton — import and invoke from main.py
+
 debate_graph = build_debate_graph()

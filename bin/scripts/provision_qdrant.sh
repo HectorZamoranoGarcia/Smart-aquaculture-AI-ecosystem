@@ -1,22 +1,14 @@
 #!/usr/bin/env bash
-# =============================================================================
-# provision_qdrant.sh — OceanTrust AI
-# =============================================================================
-# Purpose  : Wait for the Qdrant vector database to be ready, then create all
-#            application collections following the architect's vector schema.
-#
-# Usage    : bash bin/scripts/provision_qdrant.sh
-#            QDRANT_URL=http://localhost:6333 bash bin/scripts/provision_qdrant.sh
-#
-# Requires : curl, jq
-# Ref      : docs/knowledge-ingestion.md, docs/vector-worker-spec.md
-# =============================================================================
+# Create the local Qdrant collections
+# Run: bash bin/scripts/provision_qdrant.sh
+# Requires: curl and jq
 
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Configuration — override via environment variables
 # ---------------------------------------------------------------------------
+
 readonly QDRANT_URL="${QDRANT_URL:-http://localhost:6333}"
 readonly MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-120}"
 readonly POLL_INTERVAL_SECONDS=5
@@ -35,6 +27,7 @@ readonly POLL_INTERVAL_SECONDS=5
 # Fallback collection (nomic-embed-text fallback → 768-dim):
 #   telemetry_vectors_fallback — Written by Vector Worker when CB is OPEN
 # ---------------------------------------------------------------------------
+
 declare -a COLLECTIONS=(
   "fishing_regulations|3072|Cosine"
   "biological_manuals|3072|Cosine"
@@ -46,14 +39,16 @@ declare -a COLLECTIONS=(
 # ---------------------------------------------------------------------------
 # Logging helpers
 # ---------------------------------------------------------------------------
+
 log_info()    { echo "[INFO]  $(date -u '+%Y-%m-%dT%H:%M:%SZ') $*"; }
 log_success() { echo "[OK]    $(date -u '+%Y-%m-%dT%H:%M:%SZ') $*"; }
 log_warn()    { echo "[WARN]  $(date -u '+%Y-%m-%dT%H:%M:%SZ') $*" >&2; }
 log_error()   { echo "[ERROR] $(date -u '+%Y-%m-%dT%H:%M:%SZ') $*" >&2; }
 
 # ---------------------------------------------------------------------------
-# Wait for the Qdrant REST API to become available.
+# Wait for Qdrant
 # ---------------------------------------------------------------------------
+
 wait_for_qdrant() {
   log_info "Waiting for Qdrant at ${QDRANT_URL} (timeout: ${MAX_WAIT_SECONDS}s)..."
   local elapsed=0
@@ -72,9 +67,9 @@ wait_for_qdrant() {
 }
 
 # ---------------------------------------------------------------------------
-# Check if a Qdrant collection already exists.
-# Returns exit code 0 if it exists, 1 if not.
+# Check whether a collection exists
 # ---------------------------------------------------------------------------
+
 collection_exists() {
   local name="$1"
   local http_status
@@ -86,14 +81,14 @@ collection_exists() {
 }
 
 # ---------------------------------------------------------------------------
-# Create a single Qdrant collection with HNSW index configuration.
-# Skips creation if the collection already exists (idempotent).
+# Create one collection if needed
 #
 # Arguments:
 #   $1  name         — Collection name
 #   $2  vector_size  — Embedding dimensionality (3072 or 768)
 #   $3  distance     — Distance metric ("Cosine", "Dot", "Euclid")
 # ---------------------------------------------------------------------------
+
 create_collection() {
   local name="$1"
   local vector_size="$2"
@@ -136,9 +131,10 @@ create_collection() {
 }
 
 # ---------------------------------------------------------------------------
-# Create payload field indices on telemetry_vectors for fast agent querying.
+# Add telemetry payload indices
 # Ref: docs/vector-worker-spec.md §3.1
 # ---------------------------------------------------------------------------
+
 create_telemetry_indices() {
   log_info "Creating payload indices on 'telemetry_vectors'..."
 
@@ -163,9 +159,10 @@ create_telemetry_indices() {
 }
 
 # ---------------------------------------------------------------------------
-# Create payload field indices on regulatory collections for agent filtering.
+# Add reference document indices
 # Ref: docs/knowledge-ingestion.md §5.3
 # ---------------------------------------------------------------------------
+
 create_regulatory_indices() {
   local reg_collections=("fishing_regulations" "biological_manuals" "scientific_papers")
 
@@ -192,8 +189,9 @@ create_regulatory_indices() {
 }
 
 # ---------------------------------------------------------------------------
-# Parse the COLLECTIONS array and create each collection.
+# Create configured collections
 # ---------------------------------------------------------------------------
+
 provision_collections() {
   log_info "Provisioning ${#COLLECTIONS[@]} Qdrant collection(s)..."
 
@@ -216,8 +214,9 @@ provision_collections() {
 }
 
 # ---------------------------------------------------------------------------
-# Print a summary of all collections in the Qdrant instance.
+# List available collections
 # ---------------------------------------------------------------------------
+
 print_collection_summary() {
   log_info "Current Qdrant collections:"
   curl -sf "${QDRANT_URL}/collections" | \
@@ -228,6 +227,7 @@ print_collection_summary() {
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 main() {
   log_info "=== Qdrant Collection Provisioning ==="
   log_info "URL         : ${QDRANT_URL}"

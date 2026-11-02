@@ -188,6 +188,7 @@ async def test_publish_value_is_json_serializable_dict(
     assert isinstance(payload, dict)
 
     # Must not raise — all types must be natively JSON-serializable
+
     serialized = json.dumps(payload)
     assert dummy_event.event_id in serialized
     assert dummy_event.location.farm_id in serialized
@@ -258,6 +259,7 @@ async def test_backoff_recovers_on_intermediate_success(mocker, mock_logger):
     mock_sleep = mocker.patch("asyncio.sleep", new_callable=AsyncMock)
 
     # Must not raise
+
     await _publish_with_backoff(
         producer=mock_producer,
         topic="test.topic",

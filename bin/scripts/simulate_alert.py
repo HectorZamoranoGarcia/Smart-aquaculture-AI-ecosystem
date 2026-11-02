@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+
 """
 simulate_alert.py — OceanTrust AI Smoke Test Utility
 ======================================================
@@ -15,9 +16,11 @@ Judge to arbitrate between that mandate and the Commercial Trader's reply.
 
 Usage:
     # Requires: make up && make provision && python -m src.agents.main (in another shell)
+
     python bin/scripts/simulate_alert.py
 
     # Custom parameters
+
     python bin/scripts/simulate_alert.py \\
         --farm-id SC-FARM-0012 \\
         --oxygen 6.3 \\
@@ -210,8 +213,8 @@ async def publish_alert(
         bootstrap_servers=bootstrap_servers,
         acks="all",
         compression_type="gzip",
-        # Fail fast — better to surface the error immediately than hang
-        # the subprocess for 30+ seconds while the UI waits.
+        # Fail fast while the UI waits
+
         request_timeout_ms=5000,
         retry_backoff_ms=500,
         metadata_max_age_ms=3000,
@@ -276,8 +279,9 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    # 127.0.0.1 avoids IPv6 / getaddrinfo resolution failures on Windows.
-    # KAFKA_BOOTSTRAP_SERVERS env var always takes priority.
+    # Use loopback to avoid Windows IPv6 issues
+    # KAFKA_BOOTSTRAP_SERVERS takes priority
+
     bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:19092")
     topic     = os.getenv("TELEMETRY_TOPIC", "ocean.telemetry.v1")
 

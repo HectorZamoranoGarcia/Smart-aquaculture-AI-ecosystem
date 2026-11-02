@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+
 """
 verify_stream.py — OceanTrust AI
 ==================================
@@ -152,6 +153,7 @@ async def consume_and_verify(
         topic,
         bootstrap_servers=bootstrap_servers,
         # Isolated QA group — does not interfere with production consumer groups
+
         group_id="verify-stream-qa",
         auto_offset_reset="earliest",
         enable_auto_commit=False,

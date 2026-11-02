@@ -265,6 +265,7 @@ class SensorTelemetryEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     event_type: str = "SENSOR_TELEMETRY"
     # ISO 8601 with explicit UTC offset — never naive datetime
+
     timestamp: str = Field(
         default_factory=lambda: datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S+00:00")
     )
@@ -433,6 +434,7 @@ class FarmSimulator:
         triggered: list[Alert] = []
 
         # ── Dissolved oxygen ─────────────────────────────────────────────
+
         do = water.dissolved_oxygen_mg_l
         if do is not None:
             if do < 7.0:
@@ -453,6 +455,7 @@ class FarmSimulator:
                 ))
 
         # ── Temperature ──────────────────────────────────────────────────
+
         temp = water.temperature_celsius
         if temp is not None:
             if temp > 18.0:
@@ -473,6 +476,7 @@ class FarmSimulator:
                 ))
 
         # ── Sea lice — Norwegian regulatory limit: 0.5 per fish ──────────
+
         lice = bio.lice_count_per_fish
         if lice is not None and lice > 0.5:
             triggered.append(Alert(
@@ -484,6 +488,7 @@ class FarmSimulator:
             ))
 
         # ── Mortality ────────────────────────────────────────────────────
+
         mort = bio.mortality_count_24h
         if mort is not None and mort > 50:
             triggered.append(Alert(
@@ -495,6 +500,7 @@ class FarmSimulator:
             ))
 
         # ── Algae bloom ──────────────────────────────────────────────────
+
         chl = water.chlorophyll_a_ug_l
         if env.algae_bloom_detected or (chl is not None and chl > 10.0):
             triggered.append(Alert(
@@ -617,15 +623,20 @@ class OceanTelemetryProducer:
             bootstrap_servers=self._settings.kafka_bootstrap_servers,
             client_id=self._settings.kafka_client_id,
             # acks="all" requires acknowledgement from the leader and all ISRs
+
             acks="all",
             # GZIP compression: available in Python stdlib — no extra native lib needed.
             # Matches the compression.type accepted by Redpanda in dev mode.
+
             compression_type="gzip",
             # Serialise values to UTF-8 JSON bytes at the producer level
+
             value_serializer=lambda payload: json.dumps(payload).encode("utf-8"),
             # Encode the string partition key (farm_id) to bytes
+
             key_serializer=lambda k: k.encode("utf-8") if k else None,
             # Batch up to 5 ms before flushing — reduces broker round-trips
+
             linger_ms=5,
             request_timeout_ms=30_000,
         )
@@ -735,6 +746,7 @@ async def run_simulation(
                 except KafkaError as exc:
                     # All retries exhausted — log and continue to next farm
                     # to avoid a single bad partition blocking the whole loop.
+
                     logger.error(
                         "farm_skipped_after_retries",
                         farm_id=simulator.farm_id,

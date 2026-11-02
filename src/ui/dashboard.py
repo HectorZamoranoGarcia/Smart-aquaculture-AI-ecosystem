@@ -22,6 +22,7 @@ Run:
     bin/scripts/run_ui.bat          # Windows
     ./bin/scripts/run_ui.sh         # Unix / WSL
     # or directly:
+
     PYTHONPATH=. streamlit run src/ui/dashboard.py
 """
 
@@ -39,6 +40,7 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 # Page configuration — must be the very first Streamlit call
 # ---------------------------------------------------------------------------
+
 st.set_page_config(
     page_title="OceanTrust AI · Control Tower",
     page_icon="🐟",
@@ -49,6 +51,7 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
 _PROJECT_ROOT: Path  = Path(__file__).resolve().parents[2]
 _AUDIT_DIR: Path     = _PROJECT_ROOT / "logs" / "audit" / "debates"
 _SIM_SCRIPT: Path    = _PROJECT_ROOT / "bin" / "scripts" / "simulate_alert.py"
@@ -291,6 +294,7 @@ def _render_debate_history() -> None:
             if bio_args:
                 # Extract color lookups into variables — avoids backslashes
                 # inside f-string expressions (invalid in Python < 3.12).
+
                 color_bio = _AGENT_COLORS["biologist"]
                 label_bio = "🔬 Biologist"
                 st.markdown(
@@ -363,6 +367,7 @@ def _render_rag_search() -> None:
 def main() -> None:
     """Entry point — assemble and render the Control Tower dashboard."""
     # ── Page header ─────────────────────────────────────────────────────────
+
     st.title("🐟 OceanTrust AI · Control Tower")
     st.markdown(
         "Real-time aquaculture monitoring dashboard. "
@@ -371,9 +376,11 @@ def main() -> None:
     st.divider()
 
     # ── Sidebar ──────────────────────────────────────────────────────────────
+
     _render_sidebar()
 
     # ── Main tabs ────────────────────────────────────────────────────────────
+
     tab_debates, tab_rag = st.tabs(["🤖 Debate History", "🔍 Regulatory Search"])
 
     with tab_debates:
@@ -383,6 +390,7 @@ def main() -> None:
         _render_rag_search()
 
     # ── Footer ───────────────────────────────────────────────────────────────
+
     st.divider()
     st.caption(
         f"OceanTrust AI · {datetime.now().strftime('%Y-%m-%d %H:%M')} local · "
